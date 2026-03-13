@@ -88,23 +88,26 @@ function App(): JSX.Element {
       const data = await response.json()
       console.log('Connected to Jellyfin:', data.ServerName)
       
-      // Get current user ID dynamically from API
-      const userRes = await fetch(`${normalizedUrl}/Users/Me`, {
-        method: 'GET',
-        headers: { 
-          'X-MediaBrowser-Token': apiKey,
-          'Content-Type': 'application/json'
+      // Try to get current user ID - fallback to empty if not available
+      let currentUserId = ''
+      try {
+        const userRes = await fetch(`${normalizedUrl}/Users/Me`, {
+          method: 'GET',
+          headers: { 
+            'X-MediaBrowser-Token': apiKey,
+            'Content-Type': 'application/json'
+          }
+        })
+        
+        if (userRes.ok) {
+          const userData = await userRes.json()
+          currentUserId = userData.Id || ''
         }
-      })
-      
-      if (!userRes.ok) {
-        throw new Error(`Error obteniendo usuario: ${userRes.status}`)
+      } catch (e) {
+        console.warn('Could not get user ID, using fallback:', e)
       }
       
-      const userData = await userRes.json()
-      const currentUserId = userData.Id
-      
-      // Save config with dynamic user ID
+      // Save config with user ID (may be empty)
       setJellyfinConfig({ url, apiKey, userId: currentUserId })
       setUserId(currentUserId)
       setIsConnected(true)
@@ -155,25 +158,33 @@ function App(): JSX.Element {
       setAlbums([])
     }
     
-    // Load playlists
+    // Load playlists - try multiple endpoints
     try {
-      // Get user's playlist folder first
-      const userRes = await fetch(`${baseUrl}/Users/${userId}`, { headers })
-      if (!userRes.ok) throw new Error(`HTTP ${userRes.status}`)
-      const userData = await userRes.json()
+      let playlistsData = { Items: [] as any[] }
       
-      // Use the user's playlist folder ID or default
-      const playlistFolderId = userData.Configuration?.CustomQueryableFields?.includes('Playlist') 
-        ? userData.Configuration?.LatestItemsExcludes?.[0] || '1071671e7bffa0532e930debee501d2e'
-        : '1071671e7bffa0532e930debee501d2e'
+      if (userId) {
+        // Try user-specific endpoint first
+        try {
+          const playlistsRes = await fetch(`${baseUrl}/Users/${userId}/Items?IncludeItemTypes=Playlist&Limit=100`, { headers })
+          if (playlistsRes.ok) {
+            playlistsData = await playlistsRes.json()
+          }
+        } catch (e) {
+          console.warn('User playlists endpoint failed, trying generic:', e)
+        }
+      }
       
-      const playlistsRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=${playlistFolderId}&Limit=100`, { headers })
-      if (!playlistsRes.ok) throw new Error(`HTTP ${playlistsRes.status}`)
-      const playlistsData = await playlistsRes.json()
+      // If no user ID or user endpoint failed, try generic endpoint
+      if (!playlistsData.Items || playlistsData.Items.length === 0) {
+        const genericRes = await fetch(`${baseUrl}/Items?IncludeItemTypes=Playlist&Limit=100`, { headers })
+        if (genericRes.ok) {
+          playlistsData = await genericRes.json()
+        }
+      }
+      
       setPlaylists(playlistsData.Items || [])
     } catch (e) {
       console.error('Failed to load playlists:', e)
-      setError('Error cargando playlists')
       setPlaylists([])
     }
   }

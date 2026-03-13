@@ -1,13 +1,31 @@
 import { _electron as electron, ElectronApplication, Page } from 'playwright';
 import * as path from 'path';
+import * as fs from 'fs';
 
 let electronApp: ElectronApplication | null = null;
+
+// Función para encontrar el ejecutable de Electron
+function getElectronPath(): string {
+  // Intentar encontrar electron en node_modules/.bin
+  const projectPath = path.resolve(__dirname, '../../../');
+  const electronBin = path.join(projectPath, 'node_modules/.bin/electron');
+  
+  if (fs.existsSync(electronBin)) {
+    return electronBin;
+  }
+  
+  // Fallback: usar pnpm exec
+  return 'electron';
+}
 
 export async function launchApp(): Promise<ElectronApplication> {
   // Path al directorio raíz del proyecto
   const projectPath = path.resolve(__dirname, '../../../');
   
+  const electronPath = getElectronPath();
+  
   electronApp = await electron.launch({
+    executablePath: electronPath !== 'electron' ? electronPath : undefined,
     args: [path.join(projectPath, 'dist/main/index.js')],
     cwd: projectPath,
     env: {
