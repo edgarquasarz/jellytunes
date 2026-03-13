@@ -47,7 +47,7 @@ When('el usuario marca la casilla de la canción {string}', async function(this:
   await track.locator('[data-testid="track-checkbox"]').check();
 });
 
-When('el usuario marca la casilla {string}', async function(this: ICustomWorld, checkboxLabel: string) {
+When('el usuario marca la opción de sincronización {string}', async function(this: ICustomWorld, checkboxLabel: string) {
   if (checkboxLabel === 'Seleccionar todo') {
     await this.page!.click('[data-testid="select-all-checkbox"]');
   } else {

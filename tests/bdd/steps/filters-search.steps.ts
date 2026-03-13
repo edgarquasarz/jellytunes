@@ -85,7 +85,7 @@ When('el usuario busca {string}', async function(this: ICustomWorld, searchTerm:
   await this.page!.keyboard.press('Enter');
 });
 
-When('el usuario selecciona {string}', async function(this: ICustomWorld, sortOption: string) {
+When('el usuario selecciona la opción de ordenamiento {string}', async function(this: ICustomWorld, sortOption: string) {
   await this.page!.click('[data-testid="sort-dropdown"]');
   const sortMap: Record<string, string> = {
     'Ordenar por: A-Z': 'sort-az',
