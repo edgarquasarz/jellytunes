@@ -6,11 +6,14 @@ interface UsbDevice {
   deviceAddress: number
   vendorId: number
   productId: number
+  productName?: string
+  manufacturerName?: string
 }
 
 interface JellyfinConfig {
   url: string
   apiKey: string
+  userId?: string
 }
 
 interface Artist {
@@ -47,6 +50,7 @@ interface Track {
 function App(): JSX.Element {
   // State
   const [jellyfinConfig, setJellyfinConfig] = useState<JellyfinConfig | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -76,11 +80,19 @@ function App(): JSX.Element {
       const data = await response.json()
       console.log('Connected to Jellyfin:', data.ServerName)
       
-      setJellyfinConfig({ url, apiKey })
+      // Get current user ID
+      const userRes = await fetch(`${normalizedUrl}/Users/Me`, {
+        headers: { 'X-MediaBrowser-Token': apiKey }
+      })
+      const userData = await userRes.json()
+      const currentUserId = userData.Id
+      
+      setJellyfinConfig({ url, apiKey, userId: currentUserId })
+      setUserId(currentUserId)
       setIsConnected(true)
       
       // Load library data
-      await loadLibrary(url, apiKey)
+      await loadLibrary(url, apiKey, currentUserId)
       
       return true
     } catch (err) {
@@ -92,24 +104,39 @@ function App(): JSX.Element {
   }
 
   // Load library data
-  const loadLibrary = async (url: string, apiKey: string): Promise<void> => {
+  const loadLibrary = async (url: string, apiKey: string, userId: string): Promise<void> => {
     const headers = { 'X-MediaBrowser-Token': apiKey }
     const baseUrl = url.replace(/\/$/, '')
     
-    // Load artists (more)
-    const artistsRes = await fetch(`${baseUrl}/Artists?SortBy=Name&Limit=200`, { headers })
-    const artistsData = await artistsRes.json()
-    setArtists(artistsData.Items || [])
+    try {
+      // Load artists
+      const artistsRes = await fetch(`${baseUrl}/Artists?SortBy=Name&Limit=200`, { headers })
+      const artistsData = await artistsRes.json()
+      setArtists(artistsData.Items || [])
+    } catch (e) {
+      console.error('Failed to load artists:', e)
+      setArtists([])
+    }
     
-    // Load albums (using Items endpoint with IncludeItemTypes)
-    const albumsRes = await fetch(`${baseUrl}/Items?IncludeItemTypes=Album&Limit=200`, { headers })
-    const albumsData = await albumsRes.json()
-    setAlbums(albumsData.Items || [])
+    try {
+      // Load albums
+      const albumsRes = await fetch(`${baseUrl}/Items?IncludeItemTypes=Album&Limit=200`, { headers })
+      const albumsData = await albumsRes.json()
+      setAlbums(albumsData.Items || [])
+    } catch (e) {
+      console.error('Failed to load albums:', e)
+      setAlbums([])
+    }
     
-    // Load playlists (using user playlists endpoint)
-    const playlistsRes = await fetch(`${baseUrl}/Users/23ea021636224deeb6d8b761c7703b79/Items?ParentId=1071671e7bffa0532e930debee501d2e&Limit=100`, { headers })
-    const playlistsData = await playlistsRes.json()
-    setPlaylists(playlistsData.Items || [])
+    try {
+      // Load playlists
+      const playlistsRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=1071671e7bffa0532e930debee501d2e&Limit=100`, { headers })
+      const playlistsData = await playlistsRes.json()
+      setPlaylists(playlistsData.Items || [])
+    } catch (e) {
+      console.error('Failed to load playlists:', e)
+      setPlaylists([])
+    }
   }
 
   // USB detection
