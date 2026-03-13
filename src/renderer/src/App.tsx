@@ -71,22 +71,40 @@ function App(): JSX.Element {
     try {
       // Normalize URL - remove trailing slash
       const normalizedUrl = url.replace(/\/$/, '')
+      
+      // Test connection with proper headers
       const response = await fetch(`${normalizedUrl}/System/Info/Public`, {
-        headers: { 'X-MediaBrowser-Token': apiKey }
+        method: 'GET',
+        headers: { 
+          'X-MediaBrowser-Token': apiKey,
+          'Content-Type': 'application/json'
+        }
       })
       
-      if (!response.ok) throw new Error('Invalid credentials')
+      if (!response.ok) {
+        throw new Error(`Error de conexión: ${response.status} ${response.statusText}`)
+      }
       
       const data = await response.json()
       console.log('Connected to Jellyfin:', data.ServerName)
       
-      // Get current user ID
+      // Get current user ID dynamically from API
       const userRes = await fetch(`${normalizedUrl}/Users/Me`, {
-        headers: { 'X-MediaBrowser-Token': apiKey }
+        method: 'GET',
+        headers: { 
+          'X-MediaBrowser-Token': apiKey,
+          'Content-Type': 'application/json'
+        }
       })
+      
+      if (!userRes.ok) {
+        throw new Error(`Error obteniendo usuario: ${userRes.status}`)
+      }
+      
       const userData = await userRes.json()
       const currentUserId = userData.Id
       
+      // Save config with dynamic user ID
       setJellyfinConfig({ url, apiKey, userId: currentUserId })
       setUserId(currentUserId)
       setIsConnected(true)
@@ -96,7 +114,9 @@ function App(): JSX.Element {
       
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connection failed')
+      const errorMessage = err instanceof Error ? err.message : 'Connection failed'
+      setError(errorMessage)
+      console.error('Connection error:', err)
       return false
     } finally {
       setIsConnecting(false)
@@ -105,36 +125,55 @@ function App(): JSX.Element {
 
   // Load library data
   const loadLibrary = async (url: string, apiKey: string, userId: string): Promise<void> => {
-    const headers = { 'X-MediaBrowser-Token': apiKey }
+    const headers = { 
+      'X-MediaBrowser-Token': apiKey,
+      'Content-Type': 'application/json'
+    }
     const baseUrl = url.replace(/\/$/, '')
     
+    // Load artists
     try {
-      // Load artists
       const artistsRes = await fetch(`${baseUrl}/Artists?SortBy=Name&Limit=200`, { headers })
+      if (!artistsRes.ok) throw new Error(`HTTP ${artistsRes.status}`)
       const artistsData = await artistsRes.json()
       setArtists(artistsData.Items || [])
     } catch (e) {
       console.error('Failed to load artists:', e)
+      setError('Error cargando artistas')
       setArtists([])
     }
     
+    // Load albums
     try {
-      // Load albums
       const albumsRes = await fetch(`${baseUrl}/Items?IncludeItemTypes=Album&Limit=200`, { headers })
+      if (!albumsRes.ok) throw new Error(`HTTP ${albumsRes.status}`)
       const albumsData = await albumsRes.json()
       setAlbums(albumsData.Items || [])
     } catch (e) {
       console.error('Failed to load albums:', e)
+      setError('Error cargando álbumes')
       setAlbums([])
     }
     
+    // Load playlists
     try {
-      // Load playlists
-      const playlistsRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=1071671e7bffa0532e930debee501d2e&Limit=100`, { headers })
+      // Get user's playlist folder first
+      const userRes = await fetch(`${baseUrl}/Users/${userId}`, { headers })
+      if (!userRes.ok) throw new Error(`HTTP ${userRes.status}`)
+      const userData = await userRes.json()
+      
+      // Use the user's playlist folder ID or default
+      const playlistFolderId = userData.Configuration?.CustomQueryableFields?.includes('Playlist') 
+        ? userData.Configuration?.LatestItemsExcludes?.[0] || '1071671e7bffa0532e930debee501d2e'
+        : '1071671e7bffa0532e930debee501d2e'
+      
+      const playlistsRes = await fetch(`${baseUrl}/Users/${userId}/Items?ParentId=${playlistFolderId}&Limit=100`, { headers })
+      if (!playlistsRes.ok) throw new Error(`HTTP ${playlistsRes.status}`)
       const playlistsData = await playlistsRes.json()
       setPlaylists(playlistsData.Items || [])
     } catch (e) {
       console.error('Failed to load playlists:', e)
+      setError('Error cargando playlists')
       setPlaylists([])
     }
   }
@@ -320,7 +359,7 @@ function App(): JSX.Element {
               ) : (
                 devices.map((device) => (
                   <button
-                    key={device.deviceAddress}
+                    key={`${device.vendorId}-${device.productId}-${device.deviceAddress}`}
                     onClick={() => setActiveSection('devices')}
                     className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
                       activeSection === 'devices'
@@ -329,7 +368,13 @@ function App(): JSX.Element {
                     }`}
                   >
                     <HardDrive className="w-4 h-4" />
-                    USB {device.deviceAddress}
+                    <span className="truncate">
+                      {device.productName || `USB ${device.deviceAddress}`}
+                    </span>
+                    <span className="ml-auto text-xs opacity-60">
+                      {device.vendorId.toString(16).padStart(4, '0')}:
+                      {device.productId.toString(16).padStart(4, '0')}
+                    </span>
                   </button>
                 ))
               )}
@@ -415,8 +460,35 @@ function App(): JSX.Element {
 
           {activeSection === 'devices' && (
             <div className="text-center text-zinc-500 py-20">
-              <HardDrive className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <p>Conecta un dispositivo USB para sincronizar</p>
+              {devices.length === 0 ? (
+                <>
+                  <HardDrive className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                  <p>Conecta un dispositivo USB para sincronizar</p>
+                </>
+              ) : (
+                <div className="grid gap-4 text-left max-w-md mx-auto">
+                  {devices.map((device) => (
+                    <div key={`${device.vendorId}-${device.productId}-${device.deviceAddress}`} className="p-4 bg-zinc-900 rounded-lg">
+                      <div className="flex items-center gap-3 mb-3">
+                        <HardDrive className="w-8 h-8 text-blue-500" />
+                        <div>
+                          <h3 className="font-medium text-zinc-100">
+                            {device.productName || 'Dispositivo USB'}
+                          </h3>
+                          {device.manufacturerName && (
+                            <p className="text-xs text-zinc-500">{device.manufacturerName}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-xs text-zinc-500 space-y-1">
+                        <p>Dirección: {device.deviceAddress}</p>
+                        <p>VID: 0x{device.vendorId.toString(16).padStart(4, '0').toUpperCase()}</p>
+                        <p>PID: 0x{device.productId.toString(16).padStart(4, '0').toUpperCase()}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </main>
