@@ -367,7 +367,7 @@ function App(): JSX.Element {
           artists: {
             items: artistsItems,
             total: artistsData.TotalRecordCount || artistsItems.length,
-            startIndex: artistsItems.length,
+            startIndex: PAGE_SIZE, // Use PAGE_SIZE for next page, not items.length
             hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length),
             scrollPos: 0
           }
@@ -384,44 +384,27 @@ function App(): JSX.Element {
           albums: {
             items: albumsItems,
             total: albumsData.TotalRecordCount || albumsItems.length,
-            startIndex: albumsItems.length,
+            startIndex: PAGE_SIZE, // Use PAGE_SIZE for next page
             hasMore: albumsItems.length < (albumsData.TotalRecordCount || albumsItems.length),
             scrollPos: 0
           }
         }))
       } else if (tab === 'playlists') {
-        let playlistsData = { Items: [] as any[], TotalRecordCount: 0 }
-        
-        // Use /Playlists endpoint with UserId for user playlists
-        if (safeUserId) {
-          try {
-            const playlistsRes = await fetch(buildUrl(baseUrl, `/Playlists?UserId=${safeUserId}&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
-            if (playlistsRes.ok) {
-              playlistsData = await playlistsRes.json()
-              console.log('Playlists from /Playlists endpoint:', playlistsData.TotalRecordCount, 'playlists')
-            }
-          } catch (e) {
-            console.warn('/Playlists endpoint failed, trying Items:', e)
-          }
-        }
-        
-        // Fallback to Items endpoint with Playlist type
-        if (!playlistsData.Items || playlistsData.Items.length === 0) {
-          const itemsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
-          if (itemsRes.ok) {
-            playlistsData = await itemsRes.json()
-            console.log('Playlists from /Items fallback:', playlistsData.TotalRecordCount, 'items')
-          }
-        }
-        
+        // Use /Items endpoint which properly supports pagination
+        // /Playlists endpoint may not support StartIndex properly
+        const itemsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
+        if (!itemsRes.ok) throw new Error(`HTTP ${itemsRes.status}`)
+        const playlistsData = await itemsRes.json()
         const playlistsItems = playlistsData.Items || []
+        console.log('Playlists from /Items endpoint:', playlistsData.TotalRecordCount, 'items')
+        
         setPlaylists(playlistsItems)
         setPagination(prev => ({
           ...prev,
           playlists: {
             items: playlistsItems,
             total: playlistsData.TotalRecordCount || playlistsItems.length,
-            startIndex: playlistsItems.length,
+            startIndex: PAGE_SIZE, // Use PAGE_SIZE for next page
             hasMore: playlistsItems.length < (playlistsData.TotalRecordCount || playlistsItems.length),
             scrollPos: 0
           }
@@ -453,7 +436,7 @@ function App(): JSX.Element {
     setActiveLibrary(newTab)
   }
 
-  // Load initial library data (lazy load tabs on demand)
+  // Load initial library data (precarga todas las secciones para el sidebar)
   const loadLibrary = async (url: string, apiKey: string, userId: string): Promise<void> => {
     const headers = { 
       'X-MediaBrowser-Token': apiKey,
@@ -468,10 +451,11 @@ function App(): JSX.Element {
       albums: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 },
       playlists: { items: [], total: 0, startIndex: 0, hasMore: true, scrollPos: 0 }
     })
-    setLoadedTabs(new Set(['artists'])) // Start with artists loaded
+    setLoadedTabs(new Set(['artists', 'albums', 'playlists'])) // Precargar todas las secciones
     
-    // Load first page of artists (always load first tab)
+    // Load first page of ALL sections (precarga para sidebar)
     try {
+      // Artists
       const artistsRes = await fetch(buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
       if (!artistsRes.ok) throw new Error(`HTTP ${artistsRes.status}`)
       const artistsData = await artistsRes.json()
@@ -482,7 +466,7 @@ function App(): JSX.Element {
         artists: {
           items: artistsItems,
           total: artistsData.TotalRecordCount || artistsItems.length,
-          startIndex: artistsItems.length,
+          startIndex: PAGE_SIZE, // Use PAGE_SIZE for next page
           hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length),
           scrollPos: 0
         }
@@ -493,7 +477,51 @@ function App(): JSX.Element {
       setArtists([])
     }
     
-    // Note: Albums and playlists will be loaded on-demand when tab is switched
+    // Albums - precargar
+    try {
+      const albumsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
+      if (!albumsRes.ok) throw new Error(`HTTP ${albumsRes.status}`)
+      const albumsData = await albumsRes.json()
+      const albumsItems = albumsData.Items || []
+      console.log(`Preloaded first page: ${albumsItems.length} albums`)
+      setAlbums(albumsItems)
+      setPagination(prev => ({
+        ...prev,
+        albums: {
+          items: albumsItems,
+          total: albumsData.TotalRecordCount || albumsItems.length,
+          startIndex: PAGE_SIZE,
+          hasMore: albumsItems.length < (albumsData.TotalRecordCount || albumsItems.length),
+          scrollPos: 0
+        }
+      }))
+    } catch (e) {
+      console.error('Failed to load albums:', e)
+      setAlbums([])
+    }
+    
+    // Playlists - precargar (usando /Items que soporta paginación)
+    try {
+      const playlistsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
+      if (!playlistsRes.ok) throw new Error(`HTTP ${playlistsRes.status}`)
+      const playlistsData = await playlistsRes.json()
+      const playlistsItems = playlistsData.Items || []
+      console.log(`Preloaded first page: ${playlistsItems.length} playlists`)
+      setPlaylists(playlistsItems)
+      setPagination(prev => ({
+        ...prev,
+        playlists: {
+          items: playlistsItems,
+          total: playlistsData.TotalRecordCount || playlistsItems.length,
+          startIndex: PAGE_SIZE,
+          hasMore: playlistsItems.length < (playlistsData.TotalRecordCount || playlistsItems.length),
+          scrollPos: 0
+        }
+      }))
+    } catch (e) {
+      console.error('Failed to load playlists:', e)
+      setPlaylists([])
+    }
   }
 
   // Load more items (infinite scroll)
@@ -523,11 +551,8 @@ function App(): JSX.Element {
           endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`
           break
         case 'playlists':
-          if (safeUserId) {
-            endpoint = `/Playlists?UserId=${safeUserId}&Limit=${PAGE_SIZE}&StartIndex=${startIndex}`
-          } else {
-            endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`
-          }
+          // Use /Items endpoint which properly supports pagination
+          endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`
           break
       }
       
