@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Music, Search, HardDrive, Settings, User, Disc, Folder, ListMusic, RefreshCw, Play, Check, X, Loader2 } from 'lucide-react'
 
 // Types
@@ -41,6 +41,15 @@ interface Playlist {
   TrackCount: number
 }
 
+// Statistics from /Users/{userId}/Items/Counts endpoint
+interface LibraryStats {
+  ArtistCount: number
+  AlbumCount: number
+  SongCount: number
+  PlaylistCount: number
+  ItemCount: number
+}
+
 interface JellyfinUser {
   Id: string
   Name: string
@@ -48,6 +57,13 @@ interface JellyfinUser {
   Policy?: {
     IsAdministrator: boolean
   }
+}
+
+// Pagination state
+interface PaginationState {
+  artists: { items: Artist[]; total: number; startIndex: number; hasMore: boolean }
+  albums: { items: Album[]; total: number; startIndex: number; hasMore: boolean }
+  playlists: { items: Playlist[]; total: number; startIndex: number; hasMore: boolean }
 }
 
 interface Track {
@@ -79,6 +95,20 @@ function App(): JSX.Element {
   const [users, setUsers] = useState<JellyfinUser[]>([])
   const [showUserSelector, setShowUserSelector] = useState(false)
   const [pendingConfig, setPendingConfig] = useState<{url: string, apiKey: string} | null>(null)
+  
+  // Library statistics (from /Users/{userId}/Items/Counts)
+  const [stats, setStats] = useState<LibraryStats | null>(null)
+  
+  // Pagination state
+  const [pagination, setPagination] = useState<PaginationState>({
+    artists: { items: [], total: 0, startIndex: 0, hasMore: true },
+    albums: { items: [], total: 0, startIndex: 0, hasMore: true },
+    playlists: { items: [], total: 0, startIndex: 0, hasMore: true }
+  })
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  
+  // Infinite scroll ref
+  const loadMoreRef = useRef<HTMLDivElement>(null)
 
   // Connect to Jellyfin
   const connectToJellyfin = async (url: string, apiKey: string): Promise<boolean> => {
@@ -121,6 +151,7 @@ function App(): JSX.Element {
           setUserId(currentUserId)
           setIsConnected(true)
           await loadLibrary(url, apiKey, currentUserId)
+          await loadStats(url, apiKey, currentUserId)
           return true
         } else if (userRes.status === 400 || userRes.status === 401) {
           // /Users/Me doesn't work with API keys - fetch all users and let user choose
@@ -179,6 +210,7 @@ function App(): JSX.Element {
             setUserId(currentUserId)
             setIsConnected(true)
             await loadLibrary(url, apiKey, currentUserId)
+            await loadStats(url, apiKey, currentUserId)
             return true
           }
         } else {
@@ -236,6 +268,7 @@ function App(): JSX.Element {
     
     // Load library data with selected user
     await loadLibrary(url, apiKey, currentUserId)
+    await loadStats(url, apiKey, currentUserId)
   }
 
   // Cancel user selection and go back to login
@@ -254,60 +287,113 @@ function App(): JSX.Element {
     return `${cleanBase}${cleanPath}`
   }
 
-  // Load library data
+  // Constants for pagination
+  const PAGE_SIZE = 50
+
+  // Load library statistics from /Users/{userId}/Items/Counts
+  const loadStats = async (url: string, apiKey: string, userId: string): Promise<void> => {
+    const headers = { 
+      'X-MediaBrowser-Token': apiKey,
+      'Content-Type': 'application/json'
+    }
+    const baseUrl = url.replace(/\/$/, '')
+    const safeUserId = userId && userId.trim() !== '' ? userId.trim() : null
+    
+    if (!safeUserId) return
+    
+    try {
+      // Try the standard /Users/{userId}/Items/Counts endpoint
+      const statsRes = await fetch(buildUrl(baseUrl, `/Users/${safeUserId}/Items/Counts`), { headers })
+      
+      if (statsRes.ok) {
+        const statsData = await statsRes.json()
+        console.log('Library stats loaded:', statsData)
+        setStats({
+          ArtistCount: statsData.ArtistCount || 0,
+          AlbumCount: statsData.AlbumCount || 0,
+          SongCount: statsData.ChildCount || statsData.TotalCount || 0,
+          PlaylistCount: statsData.PlaylistCount || 0,
+          ItemCount: statsData.ItemCount || 0
+        })
+      } else {
+        console.warn('/Items/Counts failed, status:', statsRes.status)
+        // Fallback: we'll get counts from the first page of each list
+        setStats(null)
+      }
+    } catch (e) {
+      console.error('Failed to load stats:', e)
+      setStats(null)
+    }
+  }
+
+  // Load first page of library data (pagination)
   const loadLibrary = async (url: string, apiKey: string, userId: string): Promise<void> => {
     const headers = { 
       'X-MediaBrowser-Token': apiKey,
       'Content-Type': 'application/json'
     }
     const baseUrl = url.replace(/\/$/, '')
-    
-    // Validate userId exists and is not empty before using in URLs
     const safeUserId = userId && userId.trim() !== '' ? userId.trim() : null
     
-    // Load artists - increase limit to 6000
+    // Reset pagination state
+    setPagination({
+      artists: { items: [], total: 0, startIndex: 0, hasMore: true },
+      albums: { items: [], total: 0, startIndex: 0, hasMore: true },
+      playlists: { items: [], total: 0, startIndex: 0, hasMore: true }
+    })
+    
+    // Load first page of artists
     try {
-      const artistsRes = await fetch(buildUrl(baseUrl, '/Artists?SortBy=Name&Limit=6000'), { headers })
+      const artistsRes = await fetch(buildUrl(baseUrl, `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
       if (!artistsRes.ok) throw new Error(`HTTP ${artistsRes.status}`)
       const artistsData = await artistsRes.json()
-      setArtists(artistsData.Items || [])
+      const artistsItems = artistsData.Items || []
+      setArtists(artistsItems)
+      setPagination(prev => ({
+        ...prev,
+        artists: {
+          items: artistsItems,
+          total: artistsData.TotalRecordCount || artistsItems.length,
+          startIndex: artistsItems.length,
+          hasMore: artistsItems.length < (artistsData.TotalRecordCount || artistsItems.length)
+        }
+      }))
     } catch (e) {
       console.error('Failed to load artists:', e)
       setError('Error loading artists')
       setArtists([])
     }
     
-    // Load albums - use generic endpoint to get ALL albums in the library
-    // Use /Items endpoint (not /Users/{id}/Items) to get all albums regardless of user access
-    // Use MusicAlbum instead of Album to specifically get music albums
-    // IMPORTANT: Use high limit (20000) to fetch all albums
+    // Load first page of albums
     try {
-      const albumsRes = await fetch(buildUrl(baseUrl, '/Items?IncludeItemTypes=MusicAlbum&Limit=20000&Recursive=true'), { headers })
+      const albumsRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
       if (!albumsRes.ok) throw new Error(`HTTP ${albumsRes.status}`)
       const albumsData = await albumsRes.json()
-      const allAlbums = albumsData.Items || []
-      console.log(`Loaded ${allAlbums.length} albums`)
-      
-      setAlbums(allAlbums)
-      
-      // Warn if we might have hit the limit
-      if (allAlbums.length >= 20000) {
-        console.warn('Album limit (20000) reached - there may be more albums not loaded')
-      }
+      const albumsItems = albumsData.Items || []
+      console.log(`Loaded first page: ${albumsItems.length} albums`)
+      setAlbums(albumsItems)
+      setPagination(prev => ({
+        ...prev,
+        albums: {
+          items: albumsItems,
+          total: albumsData.TotalRecordCount || albumsItems.length,
+          startIndex: albumsItems.length,
+          hasMore: albumsItems.length < (albumsData.TotalRecordCount || albumsItems.length)
+        }
+      }))
     } catch (e) {
       console.error('Failed to load albums:', e)
       setError('Error loading albums')
       setAlbums([])
     }
     
-    // Load playlists - try user-specific endpoint first, then fallback to generic
+    // Load first page of playlists
     try {
-      let playlistsData = { Items: [] as any[] }
+      let playlistsData = { Items: [] as any[], TotalRecordCount: 0 }
       
       if (safeUserId) {
-        // Try user-specific endpoint first
         try {
-          const playlistsRes = await fetch(buildUrl(baseUrl, `/Users/${safeUserId}/Items?IncludeItemTypes=Playlist&Limit=1000`), { headers })
+          const playlistsRes = await fetch(buildUrl(baseUrl, `/Users/${safeUserId}/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0`), { headers })
           if (playlistsRes.ok) {
             playlistsData = await playlistsRes.json()
           }
@@ -316,20 +402,124 @@ function App(): JSX.Element {
         }
       }
       
-      // If no user ID or user endpoint returned no results, try generic endpoint
       if (!playlistsData.Items || playlistsData.Items.length === 0) {
-        const genericRes = await fetch(buildUrl(baseUrl, '/Items?IncludeItemTypes=Playlist&Limit=1000&Recursive=true'), { headers })
+        const genericRes = await fetch(buildUrl(baseUrl, `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=0&Recursive=true`), { headers })
         if (genericRes.ok) {
           playlistsData = await genericRes.json()
         }
       }
       
-      setPlaylists(playlistsData.Items || [])
+      const playlistsItems = playlistsData.Items || []
+      setPlaylists(playlistsItems)
+      setPagination(prev => ({
+        ...prev,
+        playlists: {
+          items: playlistsItems,
+          total: playlistsData.TotalRecordCount || playlistsItems.length,
+          startIndex: playlistsItems.length,
+          hasMore: playlistsItems.length < (playlistsData.TotalRecordCount || playlistsItems.length)
+        }
+      }))
     } catch (e) {
       console.error('Failed to load playlists:', e)
       setPlaylists([])
     }
   }
+
+  // Load more items (infinite scroll)
+  const loadMore = useCallback(async (type: 'artists' | 'albums' | 'playlists'): Promise<void> => {
+    if (!jellyfinConfig || !userId || isLoadingMore) return
+    
+    const currentPagination = pagination[type]
+    if (!currentPagination.hasMore) return
+    
+    setIsLoadingMore(true)
+    
+    const headers = { 
+      'X-MediaBrowser-Token': jellyfinConfig.apiKey,
+      'Content-Type': 'application/json'
+    }
+    const baseUrl = jellyfinConfig.url.replace(/\/$/, '')
+    const safeUserId = userId && userId.trim() !== '' ? userId.trim() : null
+    const startIndex = currentPagination.startIndex
+    
+    try {
+      let endpoint = ''
+      switch (type) {
+        case 'artists':
+          endpoint = `/Artists?SortBy=Name&Limit=${PAGE_SIZE}&StartIndex=${startIndex}`
+          break
+        case 'albums':
+          endpoint = `/Items?IncludeItemTypes=MusicAlbum&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`
+          break
+        case 'playlists':
+          if (safeUserId) {
+            endpoint = `/Users/${safeUserId}/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}`
+          } else {
+            endpoint = `/Items?IncludeItemTypes=Playlist&Limit=${PAGE_SIZE}&StartIndex=${startIndex}&Recursive=true`
+          }
+          break
+      }
+      
+      const res = await fetch(buildUrl(baseUrl, endpoint), { headers })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      
+      const data = await res.json()
+      const newItems = data.Items || []
+      
+      console.log(`Loaded more ${type}: ${newItems.length} items (startIndex: ${startIndex})`)
+      
+      // Update state
+      setPagination(prev => ({
+        ...prev,
+        [type]: {
+          items: [...prev[type].items, ...newItems],
+          total: data.TotalRecordCount || prev[type].total,
+          startIndex: startIndex + newItems.length,
+          hasMore: (startIndex + newItems.length) < (data.TotalRecordCount || prev[type].total)
+        }
+      }))
+      
+      // Also update the main state arrays
+      if (type === 'artists') {
+        setArtists(prev => [...prev, ...newItems as Artist[]])
+      } else if (type === 'albums') {
+        setAlbums(prev => [...prev, ...newItems as Album[]])
+      } else if (type === 'playlists') {
+        setPlaylists(prev => [...prev, ...newItems as Playlist[]])
+      }
+      
+    } catch (e) {
+      console.error(`Failed to load more ${type}:`, e)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [jellyfinConfig, userId, pagination, isLoadingMore])
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    if (!loadMoreRef.current) return
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isLoadingMore) {
+          // Load more for current active library
+          if (activeLibrary === 'artists' && pagination.artists.hasMore) {
+            loadMore('artists')
+          } else if (activeLibrary === 'albums' && pagination.albums.hasMore) {
+            loadMore('albums')
+          } else if (activeLibrary === 'playlists' && pagination.playlists.hasMore) {
+            loadMore('playlists')
+          }
+        }
+      },
+      { threshold: 0.1 }
+    )
+    
+    observer.observe(loadMoreRef.current)
+    
+    return () => observer.disconnect()
+  }, [activeLibrary, pagination, isLoadingMore, loadMore])
 
   // USB detection
   useEffect(() => {
@@ -550,7 +740,9 @@ function App(): JSX.Element {
               >
                 <User className="w-4 h-4" />
                 Artists
-                <span className="ml-auto text-xs opacity-60">{artists.length}</span>
+                <span className="ml-auto text-xs opacity-60">
+                  {stats ? stats.ArtistCount.toLocaleString() : pagination.artists.total > 0 ? pagination.artists.total : artists.length}
+                </span>
               </button>
               <button
                 data-testid="tab-albums"
@@ -563,7 +755,9 @@ function App(): JSX.Element {
               >
                 <Disc className="w-4 h-4" />
                 Albums
-                <span className="ml-auto text-xs opacity-60">{albums.length}</span>
+                <span className="ml-auto text-xs opacity-60">
+                  {stats ? stats.AlbumCount.toLocaleString() : pagination.albums.total > 0 ? pagination.albums.total : albums.length}
+                </span>
               </button>
               <button
                 data-testid="tab-playlists"
@@ -576,7 +770,9 @@ function App(): JSX.Element {
               >
                 <ListMusic className="w-4 h-4" />
                 Playlists
-                <span className="ml-auto text-xs opacity-60">{playlists.length}</span>
+                <span className="ml-auto text-xs opacity-60">
+                  {stats ? stats.PlaylistCount.toLocaleString() : pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length}
+                </span>
               </button>
             </nav>
           </div>
@@ -686,6 +882,25 @@ function App(): JSX.Element {
                   </div>
                 ))
               }
+              
+              {/* Infinite scroll trigger */}
+              <div ref={loadMoreRef} className="h-4 w-full">
+                {isLoadingMore && (
+                  <div className="flex items-center justify-center py-4 text-zinc-500 text-sm">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Loading more...
+                  </div>
+                )}
+                {!isLoadingMore && activeLibrary === 'artists' && pagination.artists.hasMore && (
+                  <div className="text-center text-zinc-600 text-xs py-2">Scroll for more</div>
+                )}
+                {!isLoadingMore && activeLibrary === 'albums' && pagination.albums.hasMore && (
+                  <div className="text-center text-zinc-600 text-xs py-2">Scroll for more</div>
+                )}
+                {!isLoadingMore && activeLibrary === 'playlists' && pagination.playlists.hasMore && (
+                  <div className="text-center text-zinc-600 text-xs py-2">Scroll for more</div>
+                )}
+              </div>
             </div>
           )}
 
@@ -726,8 +941,16 @@ function App(): JSX.Element {
       </div>
 
       {/* Footer Stats */}
-      <footer className="h-10 border-t border-zinc-800 flex items-center px-4 text-xs text-zinc-500">
-        <span>{artists.length} artists • {albums.length} albums • {playlists.length} playlists</span>
+      <footer className="h-10 border-t border-zinc-800 flex items-center justify-between px-4 text-xs text-zinc-500">
+        <span>
+          {stats 
+            ? `${stats.ArtistCount.toLocaleString()} artists • ${stats.AlbumCount.toLocaleString()} albums • ${stats.PlaylistCount.toLocaleString()} playlists`
+            : `${pagination.artists.total > 0 ? pagination.artists.total : artists.length} artists • ${pagination.albums.total > 0 ? pagination.albums.total : albums.length} albums • ${pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length} playlists`
+          }
+        </span>
+        <span className="text-zinc-600">
+          Showing {artists.length}/{pagination.artists.total} artists, {albums.length}/{pagination.albums.total} albums
+        </span>
       </footer>
     </div>
   )
