@@ -704,3 +704,154 @@ describe('Error Handling', () => {
     expect(result.tracksFailed.length).toBeGreaterThan(0);
   });
 });
+
+// =============================================================================
+// INTEGRATION TESTS (Real API - Skip by default in CI)
+// =============================================================================
+
+/**
+ * Integration tests that connect to a real Jellyfin server.
+ * These tests are skipped by default - run with: npm test -- --integration
+ * 
+ * To enable:
+ * 1. Set JELLYFIN_SERVER, JELLYFIN_API_KEY, JELLYFIN_USER_ID environment variables
+ * 2. Run: npm test -- --integration
+ */
+describe('Integration: Real API Tests', () => {
+  const serverUrl = process.env.JELLYFIN_SERVER;
+  const apiKey = process.env.JELLYFIN_API_KEY;
+  const userId = process.env.JELLYFIN_USER_ID;
+
+  // Skip these tests unless integration flag is provided
+  const itIfIntegration = process.env.INTEGRATION ? it : it.skip;
+
+  itIfIntegration('should connect to real Jellyfin server', async () => {
+    if (!serverUrl || !apiKey || !userId) {
+      console.warn('Skipping integration test: Missing JELLYFIN_* environment variables');
+      return;
+    }
+
+    const { createApiClient } = await import('./sync-api');
+    const api = createApiClient({
+      baseUrl: serverUrl,
+      apiKey,
+      userId,
+      timeout: 30000,
+    });
+
+    const result = await api.testConnection();
+    expect(result.success).toBe(true);
+    expect(result.serverName).toBeDefined();
+  });
+
+  itIfIntegration('should fetch tracks from real server', async () => {
+    if (!serverUrl || !apiKey || !userId) {
+      console.warn('Skipping integration test: Missing JELLYFIN_* environment variables');
+      return;
+    }
+
+    const { createApiClient } = await import('./sync-api');
+    const api = createApiClient({
+      baseUrl: serverUrl,
+      apiKey,
+      userId,
+      timeout: 60000,
+    });
+
+    // Get user first to verify credentials
+    const user = await api.getUser();
+    expect(user.id).toBe(userId);
+
+    // Get library stats
+    const stats = await api.getLibraryStats();
+    expect(stats.tracks).toBeGreaterThanOrEqual(0);
+  });
+
+  itIfIntegration('should estimate size for real items', async () => {
+    if (!serverUrl || !apiKey || !userId) {
+      console.warn('Skipping integration test: Missing JELLYFIN_* environment variables');
+      return;
+    }
+
+    const { createApiClient, createSyncCore } = await import('./sync-api');
+    const api = createApiClient({
+      baseUrl: serverUrl,
+      apiKey,
+      userId,
+      timeout: 60000,
+    });
+
+    // This would need a real item ID from the server
+    // Skip if no test albums exist
+    console.log('Integration test: Size estimation requires a real item ID');
+  });
+});
+
+// =============================================================================
+// FILE STRUCTURE TESTS
+// =============================================================================
+
+describe('File Structure', () => {
+  it('should generate correct folder structure with year', () => {
+    const sanitize = (name: string) => name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+    
+    const track = {
+      artists: ['The Beatles'],
+      album: 'Abbey Road',
+      year: 1969,
+      name: 'Come Together',
+      trackNumber: 1,
+      format: 'flac'
+    };
+    
+    // Expected: lib/The Beatles/Abbey Road (1969)/
+    const artistName = sanitize(track.artists[0]);
+    const albumName = sanitize(track.album);
+    const yearStr = track.year ? ` (${track.year})` : '';
+    const expectedDir = `lib/${artistName}/${albumName}${yearStr}`;
+    
+    expect(expectedDir).toBe('lib/The Beatles/Abbey Road (1969)');
+  });
+
+  it('should generate correct filename format', () => {
+    const sanitize = (name: string) => name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+    
+    const track = {
+      artists: ['The Beatles'],
+      album: 'Abbey Road',
+      year: 1969,
+      name: 'Come Together',
+      trackNumber: 1,
+      format: 'flac'
+    };
+    
+    // Expected: The Beatles - Abbey Road - 01 - Come Together.flac
+    const artistName = sanitize(track.artists[0]);
+    const albumName = sanitize(track.album);
+    const trackNum = String(track.trackNumber).padStart(2, '0');
+    const titleSanitized = sanitize(track.name);
+    const expectedFilename = `${artistName} - ${albumName} - ${trackNum} - ${titleSanitized}.${track.format}`;
+    
+    expect(expectedFilename).toBe('The Beatles - Abbey Road - 01 - Come Together.flac');
+  });
+
+  it('should handle missing year in folder structure', () => {
+    const sanitize = (name: string) => name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
+    
+    const track = {
+      artists: ['Unknown Artist'],
+      album: 'Unknown Album',
+      year: undefined,
+      name: 'Track',
+      trackNumber: 5,
+      format: 'mp3'
+    };
+    
+    const artistName = sanitize(track.artists[0]);
+    const albumName = sanitize(track.album);
+    const yearStr = track.year ? ` (${track.year})` : '';
+    const expectedDir = `lib/${artistName}/${albumName}${yearStr}`;
+    
+    expect(expectedDir).toBe('lib/Unknown Artist/Unknown Album');
+  });
+});

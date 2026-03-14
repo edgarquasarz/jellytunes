@@ -175,27 +175,52 @@ async function convertTrackToMp3(inputPath: string, outputPath: string, bitrate:
 
 let isSyncCancelled = false
 
-// Helper to download file from Jellyfin server
-async function downloadFromJellyfin(trackId: string, outputPath: string, serverUrl: string, apiKey: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${serverUrl}/Items/${trackId}/Download`, {
-      headers: {
-        'X-MediaBrowser-Token': apiKey,
-        'X-Emby-Token': apiKey
+// Helper to download file from Jellyfin server with retry logic
+async function downloadFromJellyfin(trackId: string, outputPath: string, serverUrl: string, apiKey: string, maxRetries: number = 3): Promise<{ success: boolean; error?: string }> {
+  const RETRY_DELAYS = [1000, 2000, 4000] // Exponential backoff
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 min timeout
+      
+      const response = await fetch(`${serverUrl}/Items/${trackId}/Download`, {
+        headers: {
+          'X-MediaBrowser-Token': apiKey,
+          'X-Emby-Token': apiKey
+        },
+        signal: controller.signal
+      })
+      
+      clearTimeout(timeoutId)
+      
+      if (!response.ok) {
+        const statusText = response.statusText || 'Unknown error'
+        if (attempt < maxRetries) {
+          log.warn(`Download attempt ${attempt} failed for track ${trackId}: ${response.status} ${statusText}. Retrying...`)
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 1]))
+          continue
+        }
+        return { success: false, error: `HTTP ${response.status}: ${statusText}` }
       }
-    })
-    
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status} ${response.statusText}`)
+      
+      const buffer = await response.arrayBuffer()
+      fs.writeFileSync(outputPath, Buffer.from(buffer))
+      return { success: true }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      
+      if (attempt < maxRetries) {
+        log.warn(`Download attempt ${attempt} failed for track ${trackId}: ${errorMsg}. Retrying...`)
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 1]))
+      } else {
+        log.error(`Download failed after ${maxRetries} attempts for track ${trackId}: ${errorMsg}`)
+        return { success: false, error: errorMsg }
+      }
     }
-    
-    const buffer = await response.arrayBuffer()
-    fs.writeFileSync(outputPath, Buffer.from(buffer))
-    return true
-  } catch (error) {
-    console.error('Download error:', error)
-    return false
   }
+  
+  return { success: false, error: 'Max retries exceeded' }
 }
 
 async function syncTracks(options: { tracks: Array<{ id: string; name: string; path: string; size: number; format: string }>; targetPath: string; convertToMp3: boolean; mp3Bitrate: string; serverUrl?: string; apiKey?: string; onProgress: (progress: { current: number; total: number; currentFile: string; status: string }) => void }): Promise<{ success: boolean; errors: string[]; syncedFiles: number }> {
@@ -333,6 +358,9 @@ ipcMain.handle('sync:start2', async (event, options) => {
     const syncErrors: string[] = []
     const total = tracks.length
     
+    // Helper function to sanitize filename
+    const sanitize = (name: string) => name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100)
+    
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i]
       mainWindow?.webContents.send('sync:progress', {
@@ -343,8 +371,24 @@ ipcMain.handle('sync:start2', async (event, options) => {
       })
       
       try {
-        const outputFileName = `${track.name}.${track.format}`
-        const outputPathFull = join(destinationPath, outputFileName)
+        // Build output path with proper structure: lib/Artista/Álbum (Año)/Artista - Álbum - Nº - Título.ext
+        const artistName = sanitize(track.artists?.[0] ?? 'Unknown Artist')
+        const albumName = sanitize(track.album ?? 'Unknown Album')
+        const yearStr = track.year ? ` (${track.year})` : ''
+        
+        // Create subfolder: lib/Artista/Álbum (Año)/
+        const albumFolder = `${artistName}${yearStr}`
+        const outputSubDir = join(destinationPath, 'lib', albumFolder)
+        
+        if (!fs.existsSync(outputSubDir)) {
+          fs.mkdirSync(outputSubDir, { recursive: true })
+        }
+        
+        // Create filename: Artista - Álbum - Nº - Título.ext
+        const trackNum = String(track.trackNumber ?? 0).padStart(2, '0')
+        const titleSanitized = sanitize(track.name)
+        const outputFileName = `${artistName} - ${albumName} - ${trackNum} - ${titleSanitized}.${track.format.toLowerCase()}`
+        const outputPathFull = join(outputSubDir, outputFileName)
         
         // Check if already exists with same size
         if (fs.existsSync(outputPathFull)) {
@@ -355,14 +399,14 @@ ipcMain.handle('sync:start2', async (event, options) => {
           }
         }
         
-        // Download from Jellyfin
-        const downloaded = await downloadFromJellyfin(track.id, outputPathFull, serverUrl.replace(/\/$/, ''), apiKey)
+        // Download from Jellyfin with retry
+        const result = await downloadFromJellyfin(track.id, outputPathFull, serverUrl.replace(/\/$/, ''), apiKey)
         
-        if (downloaded) {
+        if (result.success) {
           tracksCopied++
-          log.info(`Synced: ${track.name}`)
+          log.info(`Synced: ${track.name} -> ${outputFileName}`)
         } else {
-          syncErrors.push(`Failed to download: ${track.name}`)
+          syncErrors.push(`Failed to download "${track.name}": ${result.error}`)
         }
       } catch (err) {
         syncErrors.push(`Error syncing "${track.name}": ${err instanceof Error ? err.message : String(err)}`)

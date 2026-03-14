@@ -189,21 +189,42 @@ class SyncApiImpl implements SyncApi {
   }
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
-    const endpoint = `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources`;
+    // First get album info for year
+    let albumYear: number | undefined;
+    try {
+      const albumData = await this.request<{ ProductionYear?: number }>(`/Users/${this.userId}/Items/${albumId}`);
+      albumYear = albumData.ProductionYear;
+    } catch {
+      // Ignore - year is optional
+    }
+    
+    const endpoint = `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId`;
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(endpoint);
     
-    return (data.Items ?? [])
-      .filter(item => item.MediaSources?.[0]?.Path)
-      .map(item => this.trackItemToInfo(item));
+    const tracks = await Promise.all(
+      (data.Items ?? [])
+        .filter(item => item.MediaSources?.[0]?.Path)
+        .map(async item => {
+          const track = await this.trackItemToInfo(item);
+          track.year = track.year ?? albumYear;
+          return track;
+        })
+    );
+    
+    return tracks;
   }
 
   async getPlaylistTracks(playlistId: string): Promise<TrackInfo[]> {
     const endpoint = `/Playlists/${playlistId}/Items`;
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(endpoint);
     
-    return (data.Items ?? [])
-      .filter(item => item.MediaSources?.[0]?.Path)
-      .map(item => this.trackItemToInfo(item));
+    const tracks = await Promise.all(
+      (data.Items ?? [])
+        .filter(item => item.MediaSources?.[0]?.Path)
+        .map(item => this.trackItemToInfo(item))
+    );
+    
+    return tracks;
   }
 
   async getTracksForItems(
@@ -281,14 +302,27 @@ class SyncApiImpl implements SyncApi {
     };
   }
 
-  private trackItemToInfo(item: JellyfinTrackItem): TrackInfo {
+  private async trackItemToInfo(item: JellyfinTrackItem): Promise<TrackInfo> {
     const source = item.MediaSources?.[0];
+    
+    let year: number | undefined;
+    // Try to get album year from parent item
+    if (item.AlbumName) {
+      try {
+        const albumData = await this.request<{ ProductionYear?: number }>(`/Users/${this.userId}/Items/${item.AlbumId || item.ParentId}`);
+        year = albumData.ProductionYear;
+      } catch {
+        // Ignore - year is optional
+      }
+    }
     
     return {
       id: item.Id,
       name: item.Name,
       album: item.AlbumName,
       artists: item.Artists,
+      albumArtist: item.AlbumArtist,
+      year,
       path: source?.Path ?? '',
       format: source?.Container ?? 'unknown',
       size: source?.Size,

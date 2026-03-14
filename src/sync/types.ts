@@ -79,6 +79,10 @@ export interface TrackInfo {
   album?: string;
   /** Artist name(s) */
   artists?: string[];
+  /** Album artist */
+  albumArtist?: string;
+  /** Production year */
+  year?: number;
   /** File path on Jellyfin server */
   path: string;
   /** Audio format (mp3, flac, m4a, etc.) */

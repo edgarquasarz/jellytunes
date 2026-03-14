@@ -312,7 +312,7 @@ class SyncCoreImpl {
   // Private helpers
   
   private getOutputDir(
-    track: {artists?: string[]; album?: string},
+    track: {artists?: string[]; album?: string; year?: number},
     basePath: string,
     preserveStructure: boolean
   ): string {
@@ -320,14 +320,18 @@ class SyncCoreImpl {
       return basePath;
     }
     
-    const parts = [basePath];
+    const parts = [basePath, 'lib'];
     
     if (track.artists && track.artists.length > 0) {
       parts.push(this.sanitize(track.artists[0]));
     }
     
     if (track.album) {
-      parts.push(this.sanitize(track.album));
+      let albumFolder = this.sanitize(track.album);
+      if (track.year) {
+        albumFolder += ` (${track.year})`;
+      }
+      parts.push(albumFolder);
     }
     
     return parts.join('/');
@@ -338,16 +342,20 @@ class SyncCoreImpl {
   }
   
   private async getOutputFilename(
-    track: { name: string; path: string; format: string; trackNumber?: number },
+    track: { name: string; path: string; format: string; trackNumber?: number; artists?: string[]; album?: string },
     outputDir: string,
     options: ReturnType<typeof resolveSyncOptions>
   ): Promise<string> {
     const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
     const baseName = track.name.replace(/[<>:"/\\|?*]/g, '_');
+    const artistName = track.artists?.[0]?.replace(/[<>:"/\\|?*]/g, '_') ?? 'Unknown Artist';
+    const albumName = track.album?.replace(/[<>:"/\\|?*]/g, '_') ?? 'Unknown Album';
     
     let filename: string;
     if (track.trackNumber && options.preserveStructure) {
-      filename = `${String(track.trackNumber).padStart(2, '0')} - ${baseName}.${extension}`;
+      // Format: Artista - Álbum - Nº - Título.ext
+      const trackNum = String(track.trackNumber).padStart(2, '0');
+      filename = `${artistName} - ${albumName} - ${trackNum} - ${baseName}.${extension}`;
     } else {
       filename = `${baseName}.${extension}`;
     }
