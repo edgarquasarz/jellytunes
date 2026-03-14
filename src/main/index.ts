@@ -5,6 +5,9 @@ import log from 'electron-log'
 import { spawn } from 'child_process'
 import * as fs from 'fs'
 
+// Import new sync module
+import { createSyncCore, createValidatedConfig, validateDestination, createNodeFileSystem } from '../sync'
+
 log.transports.file.level = 'info'
 log.info('Jellysync starting...')
 
@@ -245,6 +248,59 @@ ipcMain.handle('sync:start', async (event, options) => {
     })
     return result
   } catch (error) { log.error('Sync error:', error); return { success: false, errors: [error instanceof Error ? error.message : String(error)], syncedFiles: 0 } }
+})
+
+// New sync:start2 handler using the new sync module
+ipcMain.handle('sync:start2', async (event, options) => {
+  try {
+    const { serverUrl, apiKey, userId, itemIds, itemTypes, destinationPath, options: syncOptions } = options
+    log.info(`Starting sync v2 to ${destinationPath} with ${itemIds.length} items`)
+    
+// Validate config
+    const configValidation = createValidatedConfig({ serverUrl, apiKey, userId })
+    if (!configValidation.success) {
+      return { success: false, errors: configValidation.errors, tracksCopied: 0 }
+    }
+    
+    // Validate destination
+    const destValidation = await validateDestination(destinationPath, createNodeFileSystem())
+    if (!destValidation.valid) {
+      return { success: false, errors: destValidation.errors, tracksCopied: 0 }
+    }
+    
+    // Create sync core with dependencies
+    const syncCore = createSyncCore(configValidation.config!)
+    
+    // Convert itemTypes from object to Map if needed
+    const itemTypesMap = itemTypes instanceof Map ? itemTypes : new Map(Object.entries(itemTypes))
+    
+    // Run sync
+    const result = await syncCore.sync({
+      itemIds,
+      itemTypes: itemTypesMap,
+      destinationPath,
+      options: syncOptions
+    }, (progress) => {
+      mainWindow?.webContents.send('sync:progress', {
+        current: progress.current,
+        total: progress.total,
+        currentFile: progress.currentTrack || '',
+        status: progress.phase
+      })
+    })
+    
+    log.info(`Sync v2 completed: ${result.tracksCopied} tracks, ${result.errors.length} errors`)
+    return {
+      success: result.success,
+      tracksCopied: result.tracksCopied,
+      tracksFailed: result.tracksFailed,
+      errors: result.errors,
+      totalSizeBytes: result.totalSizeBytes
+    }
+  } catch (error) { 
+    log.error('Sync v2 error:', error); 
+    return { success: false, errors: [error instanceof Error ? error.message : String(error)], tracksCopied: 0 } 
+  }
 })
 ipcMain.handle('sync:cancel', () => { cancelSync(); return { cancelled: true } })
 ipcMain.handle('app:version', () => app.getVersion())

@@ -669,6 +669,7 @@ function App(): JSX.Element {
   }
 
   // Handle sync start
+  // Handle sync start - using new sync module (sync:start2)
   const handleStartSync = async (): Promise<void> => {
     if (!syncFolder) {
       alert('Please select a sync destination folder first')
@@ -684,43 +685,59 @@ function App(): JSX.Element {
     }
     
     setIsSyncing(true)
-    setSyncProgress({ current: 0, total: 0, file: 'Fetching tracks...' })
+    setSyncProgress({ current: 0, total: 0, file: 'Validating...' })
     
     try {
-      const selectedIds = Array.from(selectedTracks)
+      // Get item types from the index
+      const itemTypesMap: Record<string, 'artist' | 'album' | 'playlist'> = {}
       
-      // Fetch all tracks from selected items
-      const tracks = await fetchTracksForSync(selectedIds)
+      // Use the itemTypeIndexRef to get types
+      const artistIds = uniqueArtists.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
+      const albumIds = uniqueAlbums.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
+      const playlistIds = uniquePlaylists.filter(p => selectedTracks.has(p.Id)).map(p => p.Id)
       
-      if (tracks.length === 0) {
-        alert('No tracks found for selected items.\n\nPossible reasons:\n• Selected items have no audio files\n• Invalid item IDs were selected\n• Network connectivity issues\n\nPlease try selecting albums or playlists instead of artists.')
-        setIsSyncing(false)
-        setSyncProgress(null)
-        return
-      }
+      artistIds.forEach(id => { if (id) itemTypesMap[id] = 'artist' })
+      albumIds.forEach(id => { if (id) itemTypesMap[id] = 'album' })
+      playlistIds.forEach(id => { if (id) itemTypesMap[id] = 'playlist' })
       
-      setSyncProgress({ current: 0, total: tracks.length, file: 'Starting sync...' })
+      const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
       
-      // Call main process to sync
-      // For now, just log - actual copy needs server-side handling
-      console.log('Would sync', tracks.length, 'tracks to', syncFolder)
+      console.log('[DEBUG] Starting sync v2 with:', {
+        itemIds: selectedIds,
+        itemTypes: itemTypesMap,
+        destination: syncFolder
+      })
       
-      // Simulate progress for demo
-      for (let i = 0; i < tracks.length; i++) {
-        setSyncProgress({ current: i + 1, total: tracks.length, file: tracks[i].name })
-        await new Promise(r => setTimeout(r, 100))
-      }
+      // Call new sync module via IPC
+      const result = await window.api.startSync2({
+        serverUrl: jellyfinConfig.url,
+        apiKey: jellyfinConfig.apiKey,
+        userId: userId,
+        itemIds: selectedIds,
+        itemTypes: itemTypesMap,
+        destinationPath: syncFolder,
+        options: {
+          convertToMp3: false, // TODO: add UI toggle
+          bitrate: '320k'
+        }
+      })
+      
+      console.log('[DEBUG] Sync v2 result:', result)
       
       setSyncProgress(null)
       setIsSyncing(false)
-      setSelectedTracks(new Set())
-      alert(`Sync complete! ${tracks.length} tracks would be copied to ${syncFolder}`)
       
+      if (result.success) {
+        setSelectedTracks(new Set())
+        alert(`Sync complete!\n\nTracks copied: ${result.tracksCopied}\nErrors: ${result.errors.length}\n\n${result.errors.length > 0 ? 'Errors:\n' + result.errors.slice(0, 5).join('\n') : ''}`)
+      } else {
+        alert(`Sync failed:\n\n${result.errors.join('\n')}`)
+      }
     } catch (error) {
       console.error('Sync error:', error)
       setSyncProgress(null)
       setIsSyncing(false)
-      alert('Sync failed: ' + error)
+      alert('Sync error: ' + error)
     }
   }
 

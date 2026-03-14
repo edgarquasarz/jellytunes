@@ -53,6 +53,18 @@ interface Api {
   onUsbAttach: (callback: () => void) => (() => void) | undefined
   onUsbDetach: (callback: () => void) => (() => void) | undefined
   startSync: (options: SyncOptions) => Promise<SyncResult>
+  startSync2: (options: {
+    serverUrl: string;
+    apiKey: string;
+    userId: string;
+    itemIds: string[];
+    itemTypes: Record<string, 'artist' | 'album' | 'playlist'>;
+    destinationPath: string;
+    options?: {
+      convertToMp3?: boolean;
+      bitrate?: '128k' | '192k' | '320k';
+    };
+  }) => Promise<{ success: boolean; tracksCopied: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>
   onSyncProgress: (callback: (progress: SyncProgress) => void) => (() => void) | undefined
   isFfmpegAvailable: () => Promise<boolean>
