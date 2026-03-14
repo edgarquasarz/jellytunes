@@ -175,6 +175,35 @@ async function convertTrackToMp3(inputPath: string, outputPath: string, bitrate:
 
 let isSyncCancelled = false
 
+// Helper to extract server root from a file path
+// Example: /mediamusic/lib/lib/4 Strings/Album/track.flac -> /mediamusic/lib/lib/
+function extractServerRoot(filePath: string): string {
+  // Common server root patterns
+  const patterns = [
+    '/mediamusic/',
+    '/music/',
+    '/data/',
+    '/media/'
+  ]
+  
+  // Find the first occurrence of a known root pattern
+  for (const pattern of patterns) {
+    const idx = filePath.toLowerCase().indexOf(pattern)
+    if (idx !== -1) {
+      return filePath.substring(0, idx + pattern.length)
+    }
+  }
+  
+  // Fallback: find the first 2 path segments
+  const parts = filePath.split('/')
+  if (parts.length >= 3) {
+    return '/' + parts[1] + '/' + parts[2] + '/'
+  }
+  
+  // Last resort: return just the root
+  return '/'
+}
+
 // Helper to download file from Jellyfin server with retry logic
 async function downloadFromJellyfin(trackId: string, outputPath: string, serverUrl: string, apiKey: string, maxRetries: number = 3): Promise<{ success: boolean; error?: string }> {
   const RETRY_DELAYS = [1000, 2000, 4000] // Exponential backoff
@@ -236,18 +265,28 @@ async function syncTracks(options: { tracks: Array<{ id: string; name: string; p
     const track = tracks[i]
     onProgress({ current: i + 1, total, currentFile: track.name, status: 'syncing' })
     try {
-      let outputFileName: string
       let outputPathFull: string
       
       // Use Jellyfin download endpoint if serverUrl is provided
       if (serverUrl && apiKey) {
-        outputFileName = `${track.name}.${track.format}`
-        outputPathFull = join(targetPath, outputFileName)
+        // Preserve server folder structure - replace server root with target path
+        // Example: /mediamusic/lib/lib/4 Strings/Album/track.flac -> /target/lib/lib/4 Strings/Album/track.flac
+        const serverRoot = extractServerRoot(track.path)
+        const relativePath = track.path.replace(serverRoot, '')
+        outputPathFull = join(targetPath, relativePath)
         
+        // Ensure directory exists
+        const dir = path.dirname(outputPathFull)
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true })
+        }
+        
+        // Check if already exists with same size
         if (fs.existsSync(outputPathFull)) {
           const existingStats = fs.statSync(outputPathFull)
           if (existingStats.size === track.size) {
             syncedFiles++
+            log.info(`Skipped (exists): ${track.name}`)
             continue
           }
         }
@@ -260,7 +299,7 @@ async function syncTracks(options: { tracks: Array<{ id: string; name: string; p
         }
       } else {
         // Fallback to local copy (for testing)
-        outputFileName = path.basename(track.path)
+        const outputFileName = path.basename(track.path)
         outputPathFull = join(targetPath, outputFileName)
         if (fs.existsSync(outputPathFull)) {
           const existingStats = fs.statSync(outputPathFull)
@@ -271,7 +310,7 @@ async function syncTracks(options: { tracks: Array<{ id: string; name: string; p
       }
       
       syncedFiles++
-      log.info(`Synced: ${track.name}`)
+      log.info(`Synced: ${track.name} -> ${outputPathFull}`)
     } catch (error) {
       const errorMsg = `Failed to sync "${track.name}": ${error instanceof Error ? error.message : String(error)}`
       log.error(errorMsg)
