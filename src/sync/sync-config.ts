@@ -100,6 +100,34 @@ export function validateUserId(userId: string): { valid: boolean; error?: string
 }
 
 /**
+ * Validate server root path format
+ */
+export function validateServerRootPath(path: string): { valid: boolean; error?: string } {
+  if (!path) {
+    // Optional field, empty is valid
+    return { valid: true };
+  }
+  
+  const trimmed = path.trim();
+  
+  if (trimmed.length === 0) {
+    return { valid: true };
+  }
+  
+  // Must start with /
+  if (!trimmed.startsWith('/')) {
+    return { valid: false, error: 'Server root path must start with /' };
+  }
+  
+  // Must end with /
+  if (!trimmed.endsWith('/')) {
+    return { valid: false, error: 'Server root path must end with /' };
+  }
+  
+  return { valid: true };
+}
+
+/**
  * Validate complete SyncConfig
  */
 export function validateSyncConfig(config: unknown): ConfigValidationResult {
@@ -139,6 +167,14 @@ export function validateSyncConfig(config: unknown): ConfigValidationResult {
     errors.push('User ID is required');
   } else {
     const { valid, error } = validateUserId(cfg.userId);
+    if (!valid && error) {
+      errors.push(error);
+    }
+  }
+  
+  // Server root path validation (optional)
+  if (cfg.serverRootPath) {
+    const { valid, error } = validateServerRootPath(cfg.serverRootPath);
     if (!valid && error) {
       errors.push(error);
     }
@@ -248,11 +284,13 @@ export function createSyncConfig(input: {
   serverUrl: string;
   apiKey: string;
   userId: string;
+  serverRootPath?: string;
 }): CreateConfigResult {
   const config: SyncConfig = {
     serverUrl: normalizeServerUrl(input.serverUrl),
     apiKey: input.apiKey.trim(),
     userId: input.userId.trim(),
+    serverRootPath: input.serverRootPath?.trim() || undefined,
   };
   
   const validation = validateSyncConfig(config);
@@ -262,4 +300,46 @@ export function createSyncConfig(input: {
     config: validation.valid ? config : undefined,
     errors: validation.errors,
   };
+}
+
+/**
+ * Build destination path from server path using server root mapping
+ * 
+ * @param serverPath - Full path from Jellyfin API (e.g., "/mediamusic/lib/lib/Ace/Five-A-Side/Ace - Five-A-Side - How Long.mp3")
+ * @param serverRootPath - Server root to strip (e.g., "/mediamusic/lib/lib/")
+ * @param destinationRoot - Local destination root (e.g., "/Volumes/MEDIA/lib")
+ * @returns Full destination path (e.g., "/Volumes/MEDIA/lib/Ace/Five-A-Side/Ace - Five-A-Side - How Long.mp3")
+ */
+export function buildDestinationPath(
+  serverPath: string,
+  serverRootPath: string,
+  destinationRoot: string
+): string {
+  // Remove server root to get relative path
+  const relativePath = serverPath.replace(serverRootPath, '');
+  
+  // Join with destination root
+  return `${destinationRoot}/${relativePath}`.replace(/\/+/g, '/');
+}
+
+/**
+ * Extract relative path from server path
+ * 
+ * @param serverPath - Full path from Jellyfin API
+ * @param serverRootPath - Server root to strip
+ * @returns Relative path (e.g., "Ace/Five-A-Side/Ace - Five-A-Side - How Long.mp3")
+ */
+export function getRelativePath(serverPath: string, serverRootPath: string): string {
+  return serverPath.replace(serverRootPath, '');
+}
+
+/**
+ * Extract filename from server path
+ * 
+ * @param serverPath - Full path from Jellyfin API
+ * @returns Filename with extension
+ */
+export function getFilenameFromPath(serverPath: string): string {
+  const parts = serverPath.split('/');
+  return parts[parts.length - 1] || '';
 }

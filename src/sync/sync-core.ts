@@ -20,6 +20,9 @@ import {
   validateSyncConfig,
   resolveSyncOptions,
   createSyncConfig,
+  buildDestinationPath,
+  getRelativePath,
+  getFilenameFromPath,
 } from './sync-config';
 
 import {
@@ -81,6 +84,7 @@ class SyncCoreImpl {
   private deps: SyncDependencies;
   private progressEmitter: ProgressEmitter;
   private cancellation: CancellationController;
+  private serverRootPath: string;
   
   constructor(config: SyncConfig, deps?: SyncDependencies) {
     // Validate config
@@ -93,6 +97,8 @@ class SyncCoreImpl {
     this.deps = deps ?? createDefaultDependencies(config);
     this.progressEmitter = createProgressEmitter();
     this.cancellation = createCancellationController();
+    // Default server root path if not provided
+    this.serverRootPath = config.serverRootPath ?? '';
   }
   
   /**
@@ -311,11 +317,31 @@ class SyncCoreImpl {
   
   // Private helpers
   
+  /**
+   * Get output directory path
+   * Uses server root mapping if configured, otherwise falls back to metadata reconstruction
+   */
   private getOutputDir(
-    track: {artists?: string[]; album?: string; year?: number},
+    track: {path: string; artists?: string[]; album?: string; year?: number},
     basePath: string,
     preserveStructure: boolean
   ): string {
+    // If server root path is configured, use original server path structure
+    if (this.serverRootPath && track.path) {
+      const relativePath = getRelativePath(track.path, this.serverRootPath);
+      // Extract directory part from relative path
+      const pathParts = relativePath.split('/');
+      if (pathParts.length > 1) {
+        // Remove filename, keep directory structure
+        pathParts.pop();
+        const dirRelative = pathParts.join('/');
+        return `${basePath}/${dirRelative}`;
+      }
+      // Only filename, use base path
+      return basePath;
+    }
+    
+    // Fallback: reconstruct from metadata
     if (!preserveStructure) {
       return basePath;
     }
@@ -341,11 +367,30 @@ class SyncCoreImpl {
     return name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 100);
   }
   
+  /**
+   * Get output filename
+   * Uses original filename from server path if configured, otherwise reconstructs from metadata
+   */
   private async getOutputFilename(
     track: { name: string; path: string; format: string; trackNumber?: number; artists?: string[]; album?: string },
     outputDir: string,
     options: ReturnType<typeof resolveSyncOptions>
   ): Promise<string> {
+    // If server root path is configured, use original filename from server path
+    if (this.serverRootPath && track.path) {
+      const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
+      const originalFilename = getFilenameFromPath(track.path);
+      
+      // Replace extension if converting to mp3
+      let filename = originalFilename;
+      if (options.convertToMp3 && !originalFilename.toLowerCase().endsWith('.mp3')) {
+        filename = originalFilename.replace(/\.[^.]+$/, `.${extension}`);
+      }
+      
+      return getUniqueFilename(outputDir, filename, this.deps.fs);
+    }
+    
+    // Fallback: reconstruct from metadata
     const extension = options.convertToMp3 ? 'mp3' : track.format.toLowerCase();
     const baseName = track.name.replace(/[<>:"/\\|?*]/g, '_');
     const artistName = track.artists?.[0]?.replace(/[<>:"/\\|?*]/g, '_') ?? 'Unknown Artist';

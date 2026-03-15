@@ -19,6 +19,8 @@ export interface SyncConfig {
   apiKey: string;
   /** User ID for library access */
   userId: string;
+  /** Server root path to strip from track paths (e.g., '/mediamusic/lib/lib/') */
+  serverRootPath?: string;
 }
 
 /**
