@@ -530,6 +530,7 @@ function App(): JSX.Element {
               }
             }
           }
+        } catch (e) { console.error(e) }
       } else if (inAlbumIndex) {
         // ES ÁLBUM → obtener tracks directamente
         try {
@@ -538,6 +539,7 @@ function App(): JSX.Element {
             const data = await albumRes.json()
             for (const track of data.Items || []) addTrack(track)
           }
+        } catch (e) { console.error(e) }
       } else if (inPlaylistIndex) {
         // ES PLAYLIST → obtener tracks de playlist
         try {
@@ -546,7 +548,7 @@ function App(): JSX.Element {
             const items = await playlistRes.json()
             for (const item of items.Items || []) addTrack(item)
           }
-      } else {
+        } catch (e) { console.error(e) }
       }
       
     }
@@ -587,11 +589,6 @@ function App(): JSX.Element {
       playlistIds.forEach(id => { if (id) itemTypesMap[id] = 'playlist' })
       
       const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
-      
-        itemIds: selectedIds,
-        itemTypes: itemTypesMap,
-        destination: syncFolder
-      })
       
       // Call new sync module via IPC
       const result = await window.api.startSync2({
