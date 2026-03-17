@@ -201,6 +201,7 @@ export interface JellyfinTrackItem {
   Id: string;
   Name: string;
   AlbumName?: string;
+  AlbumArtist?: string;
   Artists?: string[];
   Path?: string;
   MediaSources?: Array<{

@@ -777,7 +777,8 @@ describe('Integration: Real API Tests', () => {
       return;
     }
 
-    const { createApiClient, createSyncCore } = await import('./sync-api');
+    const { createApiClient } = await import('./sync-api');
+    const { createSyncCore } = await import('./sync-core');
     const api = createApiClient({
       baseUrl: serverUrl,
       apiKey,
@@ -1049,17 +1050,13 @@ describe('Server Root Path - Original Path Usage', () => {
       expect((mockFs as any).__getFile(expectedPath2)).toBeDefined();
     });
 
-    it('should fallback to metadata reconstruction when serverRootPath is not set', async () => {
+    it('should auto-detect serverRootPath and preserve lib folder in destination', async () => {
       const mockApi = createMockApiClient({
         getTracksForItems: async () => ({ tracks: tracksWithServerPath, errors: [] }),
+        downloadItem: async () => Buffer.alloc(100),
       });
 
       const mockFs = createMockFileSystem();
-      // Set up source files using original path
-      (mockFs as any).__setFile(
-        '/mediamusic/lib/lib/Ace/Five-A-Side/Ace - Five-A-Side - How Long.mp3',
-        Buffer.alloc(5000000)
-      );
 
       const deps: SyncDependencies = {
         api: mockApi,
@@ -1067,7 +1064,7 @@ describe('Server Root Path - Original Path Usage', () => {
         converter: createMockConverter(),
       };
 
-      // Config without serverRootPath
+      // Config without serverRootPath — auto-detection should kick in
       const core = createTestSyncCore(validConfig, deps);
 
       const itemTypes = new Map<string, ItemType>([
@@ -1077,12 +1074,15 @@ describe('Server Root Path - Original Path Usage', () => {
       const result = await core.sync({
         itemIds: ['album-five-a-side'],
         itemTypes,
-        destinationPath: '/Volumes/MEDIA/lib',
+        destinationPath: '/Volumes/USB',
       });
 
-      // Note: This test may fail if source files don't exist - that's ok, just checking behavior
-      // The key is that the function doesn't crash
-      expect(result.tracksFailed.length).toBeGreaterThanOrEqual(0);
+      expect(result.success).toBe(true);
+      // Auto-detection strips /mediamusic/lib/ so the relative path is lib/Ace/Five-A-Side/...
+      const expectedPath1 = '/Volumes/USB/lib/Ace/Five-A-Side/Ace - Five-A-Side - How Long.mp3';
+      const expectedPath2 = '/Volumes/USB/lib/Ace/Five-A-Side/Ace - Five-A-Side - Twenty Years Later.mp3';
+      expect((mockFs as any).__getFile(expectedPath1)).toBeDefined();
+      expect((mockFs as any).__getFile(expectedPath2)).toBeDefined();
     });
 
     it('should preserve filename exactly when using serverRootPath', async () => {

@@ -8,6 +8,9 @@ import * as fs from 'fs'
 // Import new sync module
 import { createSyncCore, createValidatedConfig, validateDestination, createNodeFileSystem } from '../sync'
 
+// Import database
+import { initDatabase, recordSyncCompleted, getSyncedItemIds, getDeviceSyncInfo, getRecentSyncHistory } from './database'
+
 log.transports.file.level = 'info'
 log.info('Jellysync starting...')
 
@@ -413,6 +416,13 @@ ipcMain.handle('sync:start2', async (event, options) => {
     )
     
     log.info(`Sync v2 completed: ${result.tracksCopied} tracks, ${result.errors.length} errors`)
+
+    // Record to SQLite
+    const status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error'
+    const syncedIds = itemIds.filter((id: string) => !result.tracksFailed.includes(id))
+    try { recordSyncCompleted(destinationPath, result.tracksCopied, result.totalSizeBytes ?? 0, status, syncedIds) }
+    catch (dbErr) { log.warn('Failed to record sync history:', dbErr) }
+
     return {
       success: result.success,
       tracksCopied: result.tracksCopied,
@@ -431,8 +441,44 @@ ipcMain.handle('dialog:selectFolder', async () => { const result = await dialog.
 ipcMain.handle('fs:getFolderStats', async (_event, folderPath: string) => { try { const stats = fs.statSync(folderPath); return { exists: true, isDirectory: stats.isDirectory(), size: stats.size, modified: stats.mtime.toISOString() } } catch (error) { return { exists: false, error: String(error) } } })
 ipcMain.handle('ffmpeg:isAvailable', async () => { try { require('child_process').execSync('ffmpeg -version', { stdio: 'ignore' }); return true } catch (e) { try { require('@ffmpeg-installer/ffmpeg'); return true } catch (e2) { return false } } })
 
+// ─── Estimate size (for preview modal) ────────────────────────────────────────
+ipcMain.handle('sync:estimateSize', async (_event, options: {
+  serverUrl: string; apiKey: string; userId: string
+  itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+}) => {
+  try {
+    const { serverUrl, apiKey, userId, itemIds, itemTypes } = options
+    const core = createSyncCore({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey, userId })
+    const itemTypesMap = new Map(Object.entries(itemTypes)) as Map<string, 'artist' | 'album' | 'playlist'>
+    const estimate = await core.estimateSize(itemIds, itemTypesMap)
+    return {
+      trackCount: estimate.trackCount,
+      totalBytes: estimate.totalBytes,
+      formatBreakdown: Object.fromEntries(estimate.formatBreakdown),
+    }
+  } catch (error) {
+    log.error('estimateSize error:', error)
+    return { trackCount: 0, totalBytes: 0, formatBreakdown: {} }
+  }
+})
+
+// ─── Sync history (SQLite) ─────────────────────────────────────────────────
+ipcMain.handle('sync:getDeviceInfo', (_event, mountPoint: string) => {
+  try { return getDeviceSyncInfo(mountPoint) }
+  catch (error) { log.error('getDeviceInfo error:', error); return null }
+})
+ipcMain.handle('sync:getHistory', () => {
+  try { return getRecentSyncHistory(20) }
+  catch (error) { log.error('getHistory error:', error); return [] }
+})
+ipcMain.handle('sync:getSyncedItems', (_event, mountPoint: string) => {
+  try { return [...getSyncedItemIds(mountPoint)] }
+  catch (error) { log.error('getSyncedItems error:', error); return [] }
+})
+
 app.whenReady().then(() => {
   log.info('App ready')
+  initDatabase()
   electronApp.setAppUserModelId('com.jellysync.app')
   app.on('browser-window-created', (_, window) => { optimizer.watchWindowShortcuts(window) })
   createWindow()

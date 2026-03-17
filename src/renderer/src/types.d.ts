@@ -71,6 +71,18 @@ interface Api {
   getVersion: () => Promise<string>
   selectFolder: () => Promise<string | null>
   getFolderStats: (path: string) => Promise<{exists: boolean, isDirectory?: boolean, size?: number, modified?: string, error?: string}>
+  estimateSize: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+  }) => Promise<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number> }>
+  getDeviceSyncInfo: (mountPoint: string) => Promise<{
+    lastSync: string | null; totalTracks: number; totalBytes: number; syncCount: number
+  } | null>
+  getSyncHistory: () => Promise<Array<{
+    id: number; deviceMountPoint: string; startedAt: string; completedAt: string | null
+    tracksSynced: number; bytesTransferred: number; status: string
+  }>>
+  getSyncedItems: (mountPoint: string) => Promise<string[]>
 }
 
 declare global {

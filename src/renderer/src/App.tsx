@@ -100,6 +100,16 @@ function App(): JSX.Element {
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [selectedTracks, setSelectedTracks] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
+  // A1 — FLAC→MP3 conversion options
+  const [convertToMp3, setConvertToMp3] = useState(false)
+  const [bitrate, setBitrate] = useState<'128k' | '192k' | '320k'>('192k')
+  // A2 — server-side search results
+  const [searchResults, setSearchResults] = useState<{ artists: Artist[]; albums: Album[]; playlists: Playlist[] } | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  // B1 — preview modal before sync
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewData, setPreviewData] = useState<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number>; alreadySyncedCount: number } | null>(null)
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
   const [users, setUsers] = useState<JellyfinUser[]>([])
   const [showUserSelector, setShowUserSelector] = useState(false)
   const [pendingConfig, setPendingConfig] = useState<{url: string, apiKey: string} | null>(null)
@@ -180,6 +190,44 @@ function App(): JSX.Element {
     'X-Emby-Token': apiKey,
     'Content-Type': 'application/json',
   })
+
+  // A2 — debounced server-side search
+  useEffect(() => {
+    if (!jellyfinConfig || !userId) return
+    if (!searchQuery || searchQuery.length < 2) {
+      setSearchResults(null)
+      return
+    }
+    setIsSearching(true)
+    const timer = setTimeout(async () => {
+      try {
+        const headers = jellyfinHeaders(jellyfinConfig.apiKey)
+        const base = jellyfinConfig.url.replace(/\/$/, '')
+        const q = encodeURIComponent(searchQuery)
+        const [artistsRes, albumsRes, playlistsRes] = await Promise.all([
+          fetch(`${base}/Artists?SearchTerm=${q}&Limit=20`, { headers }),
+          fetch(`${base}/Items?SearchTerm=${q}&IncludeItemTypes=MusicAlbum&Recursive=true&Limit=20`, { headers }),
+          fetch(`${base}/Items?SearchTerm=${q}&IncludeItemTypes=Playlist&Recursive=true&Limit=20`, { headers }),
+        ])
+        const [artistsData, albumsData, playlistsData] = await Promise.all([
+          artistsRes.ok ? artistsRes.json() : { Items: [] },
+          albumsRes.ok ? albumsRes.json() : { Items: [] },
+          playlistsRes.ok ? playlistsRes.json() : { Items: [] },
+        ])
+        setSearchResults({
+          artists: artistsData.Items ?? [],
+          albums: albumsData.Items ?? [],
+          playlists: playlistsData.Items ?? [],
+        })
+      } catch (e) {
+        console.error('Search error:', e)
+        setSearchResults(null)
+      } finally {
+        setIsSearching(false)
+      }
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [searchQuery, jellyfinConfig, userId])
 
   const fetchUserList = async (baseUrl: string, apiKey: string): Promise<JellyfinUser[]> => {
     const headers = jellyfinHeaders(apiKey)
@@ -556,22 +604,10 @@ function App(): JSX.Element {
     return tracks
   }
 
-  // Handle sync start
-  // Handle sync start - using new sync module (sync:start2)
-  const handleStartSync = async (): Promise<void> => {
-    if (!syncFolder) {
-      alert('Please select a sync destination folder first')
-      return
-    }
-    if (selectedTracks.size === 0) {
-      alert('Please select at least one item to sync')
-      return
-    }
-    if (!jellyfinConfig || !userId) {
-      alert('Not connected to Jellyfin')
-      return
-    }
-    
+  // B1 — execute sync after preview confirmation
+  const executeSyncNow = async (): Promise<void> => {
+    if (!syncFolder || !jellyfinConfig || !userId) return
+    setShowPreview(false)
     setIsSyncing(true)
     setSyncProgress({ current: 0, total: 0, file: 'Validating...' })
     
@@ -599,8 +635,8 @@ function App(): JSX.Element {
         itemTypes: itemTypesMap,
         destinationPath: syncFolder,
         options: {
-          convertToMp3: false, // TODO: add UI toggle
-          bitrate: '320k'
+          convertToMp3,
+          bitrate,
         }
       })
       
@@ -619,6 +655,39 @@ function App(): JSX.Element {
       setSyncProgress(null)
       setIsSyncing(false)
       alert('Sync error: ' + error)
+    }
+  }
+
+  // B1 — show preview modal before sync
+  const handleStartSync = async (): Promise<void> => {
+    if (!syncFolder) { alert('Please select a sync destination folder first'); return }
+    if (selectedTracks.size === 0) { alert('Please select at least one item to sync'); return }
+    if (!jellyfinConfig || !userId) { alert('Not connected to Jellyfin'); return }
+
+    setIsLoadingPreview(true)
+    try {
+      const artistIds = uniqueArtists.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
+      const albumIds = uniqueAlbums.filter(a => selectedTracks.has(a.Id)).map(a => a.Id)
+      const playlistIds = uniquePlaylists.filter(p => selectedTracks.has(p.Id)).map(p => p.Id)
+      const itemTypesMap: Record<string, 'artist' | 'album' | 'playlist'> = {}
+      artistIds.forEach(id => { if (id) itemTypesMap[id] = 'artist' })
+      albumIds.forEach(id => { if (id) itemTypesMap[id] = 'album' })
+      playlistIds.forEach(id => { if (id) itemTypesMap[id] = 'playlist' })
+      const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
+
+      const [estimate, syncedItems] = await Promise.all([
+        window.api.estimateSize({ serverUrl: jellyfinConfig.url, apiKey: jellyfinConfig.apiKey, userId, itemIds: selectedIds, itemTypes: itemTypesMap }),
+        window.api.getSyncedItems(syncFolder),
+      ])
+      const alreadySyncedCount = syncedItems.filter((id: string) => selectedIds.includes(id)).length
+      setPreviewData({ ...estimate, alreadySyncedCount })
+      setShowPreview(true)
+    } catch (e) {
+      console.error('Preview error:', e)
+      // Fall through to sync directly if preview fails
+      executeSyncNow()
+    } finally {
+      setIsLoadingPreview(false)
     }
   }
 
@@ -1235,8 +1304,47 @@ function App(): JSX.Element {
             </div>
           )}
 
+          {/* A2 — Search results */}
+          {activeSection === 'library' && searchQuery.length >= 2 && (
+            <div data-testid="search-results" className="grid gap-4 mb-2">
+              {isSearching && (
+                <div className="flex items-center gap-2 text-zinc-500 text-sm px-1 py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Searching...
+                </div>
+              )}
+              {!isSearching && searchResults && (
+                <>
+                  {searchResults.artists.map(artist => (
+                    <div key={artist.Id} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors border-l-2 border-blue-600">
+                      <input type="checkbox" checked={selectedTracks.has(artist.Id)} onChange={() => toggleTrackSelection(artist.Id)} className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500" />
+                      <User className="w-5 h-5 text-zinc-500 flex-shrink-0" />
+                      <div className="flex-1"><h3 className="font-medium">{artist.Name}</h3><p className="text-xs text-zinc-500">Artist</p></div>
+                    </div>
+                  ))}
+                  {searchResults.albums.map(album => (
+                    <div key={album.Id} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors border-l-2 border-blue-600">
+                      <input type="checkbox" checked={selectedTracks.has(album.Id)} onChange={() => toggleTrackSelection(album.Id)} className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500" />
+                      <Disc className="w-5 h-5 text-zinc-500 flex-shrink-0" />
+                      <div className="flex-1"><h3 className="font-medium">{album.Name}</h3><p className="text-xs text-zinc-500">Album · {(album as Album & { ArtistName?: string }).ArtistName}</p></div>
+                    </div>
+                  ))}
+                  {searchResults.playlists.map(pl => (
+                    <div key={pl.Id} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors border-l-2 border-blue-600">
+                      <input type="checkbox" checked={selectedTracks.has(pl.Id)} onChange={() => toggleTrackSelection(pl.Id)} className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500" />
+                      <ListMusic className="w-5 h-5 text-zinc-500 flex-shrink-0" />
+                      <div className="flex-1"><h3 className="font-medium">{pl.Name}</h3><p className="text-xs text-zinc-500">Playlist · {pl.TrackCount} songs</p></div>
+                    </div>
+                  ))}
+                  {searchResults.artists.length === 0 && searchResults.albums.length === 0 && searchResults.playlists.length === 0 && (
+                    <p className="text-zinc-500 text-sm px-1 py-2">No results for "{searchQuery}"</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {/* Content Grid */}
-          {activeSection === 'library' && (
+          {activeSection === 'library' && searchQuery.length < 2 && (
             <div data-testid="library-content" className="grid gap-4">
               {activeLibrary === 'artists' && uniqueArtists
                 .filter(a => !searchQuery || a.Name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -1369,13 +1477,44 @@ function App(): JSX.Element {
                   )}
                 </div>
 
+                {/* A1 — FLAC→MP3 conversion toggle */}
+                <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-sm">Convert to MP3</span>
+                    <button
+                      onClick={() => setConvertToMp3(v => !v)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${convertToMp3 ? 'bg-blue-600' : 'bg-zinc-600'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${convertToMp3 ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                  {convertToMp3 && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-xs text-zinc-400">Bitrate:</span>
+                      {(['128k', '192k', '320k'] as const).map(b => (
+                        <button
+                          key={b}
+                          onClick={() => setBitrate(b)}
+                          className={`px-2 py-1 text-xs rounded ${bitrate === b ? 'bg-blue-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-zinc-500 mt-2">
+                    {convertToMp3 ? `FLAC/M4A/AAC/OGG → MP3 ${bitrate}` : 'Files copied as-is'}
+                  </p>
+                </div>
+
                 {syncFolder && (
                   <button
                     onClick={handleStartSync}
-                    disabled={isSyncing}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 py-3 rounded-lg font-medium transition-colors"
+                    disabled={isSyncing || isLoadingPreview}
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                   >
-                    {isSyncing ? 'Syncing...' : 'Start Sync'}
+                    {isLoadingPreview ? <><Loader2 className="w-4 h-4 animate-spin" /> Calculating...</> :
+                     isSyncing ? 'Syncing...' : 'Start Sync'}
                   </button>
                 )}
 
@@ -1443,6 +1582,65 @@ function App(): JSX.Element {
           )}
         </main>
       </div>
+
+      {/* B1 — Preview modal */}
+      {showPreview && previewData && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowPreview(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Check className="w-5 h-5 text-blue-500" />
+              Sync Preview
+            </h2>
+            <div className="space-y-3 mb-6">
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-400">Tracks to sync</span>
+                <span className="font-medium">{previewData.trackCount.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-400">Total size</span>
+                <span className="font-medium">{(previewData.totalBytes / 1024 / 1024 / 1024).toFixed(2)} GB</span>
+              </div>
+              {previewData.alreadySyncedCount > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-400">Previously synced</span>
+                  <span className="text-green-400">{previewData.alreadySyncedCount} (will skip if unchanged)</span>
+                </div>
+              )}
+              {Object.keys(previewData.formatBreakdown).length > 0 && (
+                <div className="text-sm">
+                  <span className="text-zinc-400 block mb-1">Formats</span>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(previewData.formatBreakdown).map(([fmt, bytes]) => (
+                      <span key={fmt} className="bg-zinc-800 px-2 py-0.5 rounded text-xs">
+                        {fmt.toUpperCase()} · {(bytes / 1024 / 1024).toFixed(0)} MB
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {convertToMp3 && (
+                <div className="text-xs text-zinc-500 bg-zinc-800 rounded p-2">
+                  FLAC/lossless will be converted to MP3 {bitrate}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowPreview(false)}
+                className="flex-1 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeSyncNow}
+                className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-sm font-medium transition-colors"
+              >
+                Confirm Sync
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer Stats */}
       <footer className="h-10 border-t border-zinc-800 flex items-center justify-between px-4 text-xs text-zinc-500">

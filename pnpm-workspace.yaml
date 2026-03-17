@@ -4,4 +4,10 @@ packages:
 ignoredBuiltDependencies:
   - drivelist
 
-onlyBuiltDependencies: '[]'
+onlyBuiltDependencies:
+  - '@ffmpeg-installer/darwin-x64'
+  - '['
+  - ']'
+  - better-sqlite3
+  - electron
+  - esbuild

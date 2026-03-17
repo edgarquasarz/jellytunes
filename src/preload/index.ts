@@ -104,7 +104,27 @@ const api = {
     ipcRenderer.invoke('dialog:selectFolder'),
   
   getFolderStats: (folderPath: string): Promise<{exists: boolean, isDirectory?: boolean, size?: number, modified?: string, error?: string}> =>
-    ipcRenderer.invoke('fs:getFolderStats', folderPath)
+    ipcRenderer.invoke('fs:getFolderStats', folderPath),
+
+  estimateSize: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+  }): Promise<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number> }> =>
+    ipcRenderer.invoke('sync:estimateSize', options),
+
+  getDeviceSyncInfo: (mountPoint: string): Promise<{
+    lastSync: string | null; totalTracks: number; totalBytes: number; syncCount: number
+  } | null> =>
+    ipcRenderer.invoke('sync:getDeviceInfo', mountPoint),
+
+  getSyncHistory: (): Promise<Array<{
+    id: number; deviceMountPoint: string; startedAt: string; completedAt: string | null
+    tracksSynced: number; bytesTransferred: number; status: string
+  }>> =>
+    ipcRenderer.invoke('sync:getHistory'),
+
+  getSyncedItems: (mountPoint: string): Promise<string[]> =>
+    ipcRenderer.invoke('sync:getSyncedItems', mountPoint),
 }
 
 if (process.contextIsolated) {
