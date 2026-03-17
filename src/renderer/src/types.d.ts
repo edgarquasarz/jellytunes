@@ -83,6 +83,11 @@ interface Api {
     tracksSynced: number; bytesTransferred: number; status: string
   }>>
   getSyncedItems: (mountPoint: string) => Promise<string[]>
+  removeItems: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+    destinationPath: string
+  }) => Promise<{ removed: number; errors: string[] }>
 }
 
 declare global {

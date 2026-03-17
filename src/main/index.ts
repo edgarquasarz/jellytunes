@@ -9,7 +9,7 @@ import * as fs from 'fs'
 import { createSyncCore, createValidatedConfig, validateDestination, createNodeFileSystem } from '../sync'
 
 // Import database
-import { initDatabase, recordSyncCompleted, getSyncedItemIds, getDeviceSyncInfo, getRecentSyncHistory } from './database'
+import { initDatabase, recordSyncCompleted, getSyncedItemIds, getDeviceSyncInfo, getRecentSyncHistory, removeSyncedItems } from './database'
 
 log.transports.file.level = 'info'
 log.info('Jellysync starting...')
@@ -474,6 +474,28 @@ ipcMain.handle('sync:getHistory', () => {
 ipcMain.handle('sync:getSyncedItems', (_event, mountPoint: string) => {
   try { return [...getSyncedItemIds(mountPoint)] }
   catch (error) { log.error('getSyncedItems error:', error); return [] }
+})
+
+// ─── Remove items from destination ──────────────────────────────────────────
+ipcMain.handle('sync:removeItems', async (_event, options: {
+  serverUrl: string; apiKey: string; userId: string
+  itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+  destinationPath: string
+}) => {
+  try {
+    const { serverUrl, apiKey, userId, itemIds, itemTypes, destinationPath } = options
+    log.info(`Removing ${itemIds.length} items from ${destinationPath}`)
+    const core = createSyncCore({ serverUrl: serverUrl.replace(/\/$/, ''), apiKey, userId })
+    const itemTypesMap = new Map(Object.entries(itemTypes)) as Map<string, 'artist' | 'album' | 'playlist'>
+    const result = await core.removeItems(itemIds, itemTypesMap, destinationPath)
+    log.info(`Removed ${result.removed} tracks, ${result.errors.length} errors`)
+    // Remove from SQLite tracking
+    try { removeSyncedItems(destinationPath, itemIds) } catch (dbErr) { log.warn('Failed to remove synced items from db:', dbErr) }
+    return result
+  } catch (error) {
+    log.error('removeItems error:', error)
+    return { removed: 0, errors: [error instanceof Error ? error.message : String(error)] }
+  }
 })
 
 app.whenReady().then(() => {

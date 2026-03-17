@@ -205,6 +205,21 @@ export function getRecentSyncHistory(limit = 10): SyncHistoryEntry[] {
     .all(limit) as SyncHistoryEntry[]
 }
 
+export function removeSyncedItems(mountPoint: string, itemIds: string[]): void {
+  if (itemIds.length === 0) return
+  const database = requireDb()
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined
+  if (!device) return
+
+  const stmt = database.prepare('DELETE FROM synced_files WHERE device_id = ? AND item_id = ?')
+  const deleteMany = database.transaction((ids: string[]) => {
+    for (const id of ids) stmt.run(device.id, id)
+  })
+  deleteMany(itemIds)
+}
+
 export function closeDatabase(): void {
   db?.close()
   db = null

@@ -37,7 +37,10 @@ export interface FileSystem {
   
   /** List directory contents */
   readdir(path: string): Promise<string[]>;
-  
+
+  /** Remove empty directory */
+  rmdir(path: string): Promise<void>;
+
   /** Get available disk space */
   getFreeSpace(path: string): Promise<number>;
 }
@@ -100,7 +103,12 @@ export function createNodeFileSystem(): FileSystem {
     readdir: async (path: string) => {
       return readdir(path);
     },
-    
+
+    rmdir: async (path: string) => {
+      const { rmdir } = require('fs/promises');
+      await rmdir(path);
+    },
+
     getFreeSpace: async (path: string) => {
       // Platform-specific implementation
       const platform = process.platform;
@@ -188,7 +196,11 @@ export function createMockFileSystem(overrides?: Partial<FileSystem>): FileSyste
         .map(f => f.slice(prefix.length).split('/')[0])
         .filter((v, i, a) => a.indexOf(v) === i);
     },
-    
+
+    rmdir: async (path: string) => {
+      directories.delete(path);
+    },
+
     getFreeSpace: async () => Number.MAX_SAFE_INTEGER,
   };
   

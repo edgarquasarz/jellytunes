@@ -342,12 +342,69 @@ class SyncCoreImpl {
   }
   
   /**
+   * Remove synced items from destination
+   * Fetches tracks from Jellyfin to compute destination paths, then deletes files.
+   */
+  async removeItems(
+    itemIds: string[],
+    itemTypes: Map<string, ItemType>,
+    destinationPath: string
+  ): Promise<{ removed: number; errors: string[] }> {
+    if (itemIds.length === 0) return { removed: 0, errors: [] };
+
+    const { tracks } = await this.deps.api.getTracksForItems(itemIds, itemTypes);
+    if (tracks.length === 0) return { removed: 0, errors: [] };
+
+    // Auto-detect serverRootPath if not set
+    if (!this.serverRootPath) {
+      const detected = detectServerRootPath(tracks);
+      if (detected) this.serverRootPath = detected;
+    }
+
+    const errors: string[] = [];
+    let removed = 0;
+    const dirsToClean = new Set<string>();
+
+    for (const track of tracks) {
+      try {
+        if (!track.path) continue;
+        const outputDir = this.getOutputDir(track, destinationPath, true);
+        const originalFilename = getFilenameFromPath(track.path);
+        // Try original filename first, then .mp3 variant (in case it was converted)
+        const mp3Filename = originalFilename.replace(/\.[^.]+$/, '.mp3');
+
+        let deleted = false;
+        for (const filename of [originalFilename, mp3Filename]) {
+          const outputPath = `${outputDir}/${filename}`;
+          if (await this.deps.fs.exists(outputPath)) {
+            await this.deps.fs.unlink(outputPath);
+            deleted = true;
+            dirsToClean.add(outputDir);
+            break;
+          }
+        }
+        if (deleted) removed++;
+      } catch (error) {
+        errors.push(`Failed to remove "${track.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    // Clean up empty directories (deepest first)
+    const sortedDirs = [...dirsToClean].sort((a, b) => b.length - a.length);
+    for (const dir of sortedDirs) {
+      await this.cleanEmptyDir(dir, destinationPath);
+    }
+
+    return { removed, errors };
+  }
+
+  /**
    * Test connection to Jellyfin
    */
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     return this.deps.api.testConnection();
   }
-  
+
   // Private helpers
   
   /**
@@ -450,6 +507,20 @@ class SyncCoreImpl {
     return convertible.includes(format.toLowerCase());
   }
   
+  private async cleanEmptyDir(dir: string, basePath: string): Promise<void> {
+    if (dir === basePath || !dir.startsWith(basePath + '/')) return;
+    try {
+      const contents = await this.deps.fs.readdir(dir);
+      if (contents.length === 0) {
+        await this.deps.fs.rmdir(dir);
+        const parent = dir.substring(0, dir.lastIndexOf('/'));
+        await this.cleanEmptyDir(parent, basePath);
+      }
+    } catch {
+      // Ignore errors during cleanup
+    }
+  }
+
   private async convertAndCopy(
     track: { id: string; path: string; name: string },
     outputPath: string,
@@ -509,11 +580,12 @@ class SyncCoreImpl {
  */
 export function createSyncCore(config: SyncConfig, deps?: SyncDependencies): SyncCore {
   const core = new SyncCoreImpl(config, deps);
-  
+
   return {
     sync: (input, onProgress) => core.sync(input, onProgress),
     validateDestination: (path) => core.validateDestination(path),
     estimateSize: (itemIds, itemTypes) => core.estimateSize(itemIds, itemTypes),
+    removeItems: (itemIds, itemTypes, destinationPath) => core.removeItems(itemIds, itemTypes, destinationPath),
     testConnection: () => core.testConnection(),
   };
 }
@@ -525,6 +597,7 @@ export interface SyncCore {
   sync(input: SyncInput, onProgress?: ProgressCallback): Promise<SyncResult>;
   validateDestination(path: string): Promise<DestinationValidation>;
   estimateSize(itemIds: string[], itemTypes: Map<string, ItemType>): Promise<SizeEstimate>;
+  removeItems(itemIds: string[], itemTypes: Map<string, ItemType>, destinationPath: string): Promise<{ removed: number; errors: string[] }>;
   testConnection(): Promise<{ success: boolean; error?: string }>;
 }
 

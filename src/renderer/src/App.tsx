@@ -108,8 +108,10 @@ function App(): JSX.Element {
   const [isSearching, setIsSearching] = useState(false)
   // B1 — preview modal before sync
   const [showPreview, setShowPreview] = useState(false)
-  const [previewData, setPreviewData] = useState<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number>; alreadySyncedCount: number } | null>(null)
+  const [previewData, setPreviewData] = useState<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number>; alreadySyncedCount: number; willRemoveCount?: number } | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+  // B2 — previously synced items for pre-checking
+  const [previouslySyncedItems, setPreviouslySyncedItems] = useState<Set<string>>(new Set())
   const [users, setUsers] = useState<JellyfinUser[]>([])
   const [showUserSelector, setShowUserSelector] = useState(false)
   const [pendingConfig, setPendingConfig] = useState<{url: string, apiKey: string} | null>(null)
@@ -175,6 +177,24 @@ function App(): JSX.Element {
     }
   }, [jellyfinConfig])
   
+  // Load previously synced items when destination folder changes
+  useEffect(() => {
+    if (!syncFolder) {
+      setPreviouslySyncedItems(new Set())
+      return
+    }
+    window.api.getSyncedItems(syncFolder).then((ids: string[]) => {
+      const idSet = new Set(ids)
+      setPreviouslySyncedItems(idSet)
+      // Pre-check previously synced items
+      setSelectedTracks(prev => {
+        const next = new Set(prev)
+        for (const id of idSet) next.add(id)
+        return next
+      })
+    }).catch(() => { /* ignore if db not ready */ })
+  }, [syncFolder])
+
   // Track which tab data is currently loaded in main state
   const [loadedTabs, setLoadedTabs] = useState<Set<'artists' | 'albums' | 'playlists'>>(new Set(['artists']))
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -630,6 +650,33 @@ function App(): JSX.Element {
       playlistIds.forEach(id => { if (id) itemTypesMap[id] = 'playlist' })
       const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
 
+      // Compute items to delete: previously synced AND visible now AND unchecked
+      const visibleIds = new Set([
+        ...uniqueArtists.map(a => a.Id),
+        ...uniqueAlbums.map(a => a.Id),
+        ...uniquePlaylists.map(p => p.Id),
+      ])
+      const toDeleteIds = [...previouslySyncedItems].filter(id => visibleIds.has(id) && !selectedTracks.has(id))
+
+      // Delete unchecked previously-synced items
+      if (toDeleteIds.length > 0) {
+        setSyncProgress({ current: 0, total: 0, file: 'Removing deselected items...' })
+        const deleteTypesMap: Record<string, 'artist' | 'album' | 'playlist'> = {}
+        toDeleteIds.forEach(id => {
+          if (uniqueArtists.find(a => a.Id === id)) deleteTypesMap[id] = 'artist'
+          else if (uniqueAlbums.find(a => a.Id === id)) deleteTypesMap[id] = 'album'
+          else if (uniquePlaylists.find(p => p.Id === id)) deleteTypesMap[id] = 'playlist'
+        })
+        await window.api.removeItems({
+          serverUrl: jellyfinConfig.url,
+          apiKey: jellyfinConfig.apiKey,
+          userId,
+          itemIds: toDeleteIds,
+          itemTypes: deleteTypesMap,
+          destinationPath: syncFolder,
+        })
+      }
+
       const result = await window.api.startSync2({
         serverUrl: jellyfinConfig.url,
         apiKey: jellyfinConfig.apiKey,
@@ -645,8 +692,11 @@ function App(): JSX.Element {
       setIsSyncing(false)
 
       if (result.success) {
-        setSelectedTracks(new Set())
-        alert(`Sync complete!\n\nTracks copied: ${result.tracksCopied}\nErrors: ${result.errors.length}\n\n${result.errors.length > 0 ? 'Errors:\n' + result.errors.slice(0, 5).join('\n') : ''}`)
+        // Refresh previously synced items
+        const updatedIds = await window.api.getSyncedItems(syncFolder)
+        setPreviouslySyncedItems(new Set(updatedIds))
+        const deleteInfo = toDeleteIds.length > 0 ? `\nRemoved: ${toDeleteIds.length} item(s)` : ''
+        alert(`Sync complete!\n\nTracks copied: ${result.tracksCopied}${deleteInfo}\nErrors: ${result.errors.length}\n\n${result.errors.length > 0 ? 'Errors:\n' + result.errors.slice(0, 5).join('\n') : ''}`)
       } else {
         alert(`Sync failed:\n\n${result.errors.join('\n')}`)
       }
@@ -681,7 +731,13 @@ function App(): JSX.Element {
         window.api.getSyncedItems(syncFolder),
       ])
       const alreadySyncedCount = syncedItems.filter((id: string) => selectedIds.includes(id)).length
-      setPreviewData({ ...estimate, alreadySyncedCount })
+      const visibleIds = new Set([
+        ...uniqueArtists.map(a => a.Id),
+        ...uniqueAlbums.map(a => a.Id),
+        ...uniquePlaylists.map(p => p.Id),
+      ])
+      const willRemoveCount = [...previouslySyncedItems].filter(id => visibleIds.has(id) && !selectedTracks.has(id)).length
+      setPreviewData({ ...estimate, alreadySyncedCount, willRemoveCount })
       setShowPreview(true)
     } catch (e) {
       console.error('Preview error:', e)
@@ -1349,74 +1405,86 @@ function App(): JSX.Element {
             <div data-testid="library-content" className="grid gap-4">
               {activeLibrary === 'artists' && uniqueArtists
                 .filter(a => !searchQuery || a.Name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map((artist, idx) => (
-                  <div key={artist.Id || `artist-${idx}`} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={selectedTracks.has(artist.Id)}
-                      onChange={() => toggleTrackSelection(artist.Id)}
-                      className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
-                      <User className="w-6 h-6 text-zinc-500" />
+                .map((artist, idx) => {
+                  const wasSynced = previouslySyncedItems.has(artist.Id)
+                  const willDelete = wasSynced && !selectedTracks.has(artist.Id)
+                  return (
+                    <div key={artist.Id || `artist-${idx}`} className={`flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors ${willDelete ? 'border border-red-800/50' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTracks.has(artist.Id)}
+                        onChange={() => toggleTrackSelection(artist.Id)}
+                        className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
+                        <User className="w-6 h-6 text-zinc-500" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-medium">{artist.Name}</h3>
+                        <p className="text-sm text-zinc-500">{artist.AlbumCount} albums{wasSynced && <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${willDelete ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>{willDelete ? 'will remove' : 'synced'}</span>}</p>
+                      </div>
+                      <button className="p-2 hover:bg-zinc-700 rounded-lg">
+                        <Play className="w-5 h-5" />
+                      </button>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium">{artist.Name}</h3>
-                      <p className="text-sm text-zinc-500">{artist.AlbumCount} albums</p>
-                    </div>
-                    <button className="p-2 hover:bg-zinc-700 rounded-lg">
-                      <Play className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))
+                  )
+                })
               }
               
               {activeLibrary === 'albums' && uniqueAlbums
                 .filter(a => !searchQuery || a.Name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map((album, idx) => (
-                  <div key={album.Id || `album-${idx}`} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={selectedTracks.has(album.Id)}
-                      onChange={() => toggleTrackSelection(album.Id)}
-                      className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
-                      <Disc className="w-6 h-6 text-zinc-500" />
+                .map((album, idx) => {
+                  const wasSynced = previouslySyncedItems.has(album.Id)
+                  const willDelete = wasSynced && !selectedTracks.has(album.Id)
+                  return (
+                    <div key={album.Id || `album-${idx}`} className={`flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors ${willDelete ? 'border border-red-800/50' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTracks.has(album.Id)}
+                        onChange={() => toggleTrackSelection(album.Id)}
+                        className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
+                        <Disc className="w-6 h-6 text-zinc-500" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-medium">{album.Name}</h3>
+                        <p className="text-sm text-zinc-500">{album.ArtistName} • {album.Year}{wasSynced && <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${willDelete ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>{willDelete ? 'will remove' : 'synced'}</span>}</p>
+                      </div>
+                      <button className="p-2 hover:bg-zinc-700 rounded-lg">
+                        <Play className="w-5 h-5" />
+                      </button>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium">{album.Name}</h3>
-                      <p className="text-sm text-zinc-500">{album.ArtistName} • {album.Year}</p>
-                    </div>
-                    <button className="p-2 hover:bg-zinc-700 rounded-lg">
-                      <Play className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))
+                  )
+                })
               }
-              
+
               {activeLibrary === 'playlists' && uniquePlaylists
                 .filter(p => !searchQuery || p.Name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map((playlist, idx) => (
-                  <div key={playlist.Id || `playlist-${idx}`} className="flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={selectedTracks.has(playlist.Id)}
-                      onChange={() => toggleTrackSelection(playlist.Id)}
-                      className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
-                      <ListMusic className="w-6 h-6 text-zinc-500" />
+                .map((playlist, idx) => {
+                  const wasSynced = previouslySyncedItems.has(playlist.Id)
+                  const willDelete = wasSynced && !selectedTracks.has(playlist.Id)
+                  return (
+                    <div key={playlist.Id || `playlist-${idx}`} className={`flex items-center gap-4 p-4 bg-zinc-900 rounded-lg hover:bg-zinc-800 transition-colors ${willDelete ? 'border border-red-800/50' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedTracks.has(playlist.Id)}
+                        onChange={() => toggleTrackSelection(playlist.Id)}
+                        className="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-blue-600 focus:ring-blue-500"
+                      />
+                      <div className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center">
+                        <ListMusic className="w-6 h-6 text-zinc-500" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-medium">{playlist.Name}</h3>
+                        <p className="text-sm text-zinc-500">{playlist.TrackCount} songs{wasSynced && <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${willDelete ? 'bg-red-900/50 text-red-400' : 'bg-green-900/50 text-green-400'}`}>{willDelete ? 'will remove' : 'synced'}</span>}</p>
+                      </div>
+                      <button className="p-2 hover:bg-zinc-700 rounded-lg">
+                        <Play className="w-5 h-5" />
+                      </button>
                     </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium">{playlist.Name}</h3>
-                      <p className="text-sm text-zinc-500">{playlist.TrackCount} songs</p>
-                    </div>
-                    <button className="p-2 hover:bg-zinc-700 rounded-lg">
-                      <Play className="w-5 h-5" />
-                    </button>
-                  </div>
-                ))
+                  )
+                })
               }
               
               {/* Infinite scroll trigger */}
@@ -1605,6 +1673,12 @@ function App(): JSX.Element {
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-400">Previously synced</span>
                   <span className="text-green-400">{previewData.alreadySyncedCount} (will skip if unchanged)</span>
+                </div>
+              )}
+              {(previewData.willRemoveCount ?? 0) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-zinc-400">Will remove from device</span>
+                  <span className="text-red-400">{previewData.willRemoveCount} item(s)</span>
                 </div>
               )}
               {Object.keys(previewData.formatBreakdown).length > 0 && (

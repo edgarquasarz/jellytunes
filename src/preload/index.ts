@@ -125,6 +125,13 @@ const api = {
 
   getSyncedItems: (mountPoint: string): Promise<string[]> =>
     ipcRenderer.invoke('sync:getSyncedItems', mountPoint),
+
+  removeItems: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+    destinationPath: string
+  }): Promise<{ removed: number; errors: string[] }> =>
+    ipcRenderer.invoke('sync:removeItems', options),
 }
 
 if (process.contextIsolated) {
