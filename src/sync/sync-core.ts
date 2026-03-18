@@ -226,24 +226,25 @@ class SyncCoreImpl {
           const outputDir = this.getOutputDir(track, input.destinationPath, options.preserveStructure ?? true);
           await ensureDirectory(outputDir, this.deps.fs);
           
-          const outputFilename = await this.getOutputFilename(track, outputDir, options);
-          const outputPath = `${outputDir}/${outputFilename}`;
-          
           const willConvert = options.convertToMp3 && this.needsConversion(track.format);
 
-          // Skip if already up-to-date
-          if (options.skipExisting && await this.deps.fs.exists(outputPath)) {
+          // Resolve the canonical filename (no uniqueness suffix yet)
+          const outputFilename = this.resolveCanonicalFilename(track, options);
+          const outputPath = `${outputDir}/${outputFilename}`;
+
+          // Skip or overwrite if file already exists at the canonical path
+          if (await this.deps.fs.exists(outputPath)) {
             if (willConvert) {
-              // For converted files the output format differs from source,
-              // so size comparison is meaningless. Existence is sufficient.
+              // Cross-format: can't compare sizes meaningfully, skip if present
               stats.itemsSkipped++;
               continue;
             }
-            const existingStat = await this.deps.fs.stat(outputPath);
-            if (existingStat.size === (track.size ?? 0) && track.size) {
+            if (track.size && (await this.deps.fs.stat(outputPath)).size === track.size) {
+              // Same size → unchanged, skip
               stats.itemsSkipped++;
               continue;
             }
+            // Size differs → fall through and overwrite
           }
 
           // Copy or convert
@@ -529,18 +530,31 @@ class SyncCoreImpl {
    * Get output filename
    * Uses original filename from server path if available, otherwise reconstructs from metadata
    */
+  /**
+   * Resolve the canonical (non-suffixed) output filename for a track.
+   * This is used to check if the file already exists before deciding
+   * whether to skip, overwrite, or download.
+   */
+  private resolveCanonicalFilename(
+    track: { name: string; path: string; format: string; trackNumber?: number; artists?: string[]; album?: string },
+    options: ReturnType<typeof resolveSyncOptions>
+  ): string {
+    if (track.path) {
+      return this.resolveFilenameFromPath(track, options);
+    }
+    return this.buildFilenameFromMetadata(track, options);
+  }
+
+  /**
+   * @deprecated Use resolveCanonicalFilename + manual uniqueness only for new files.
+   * Kept for any external callers.
+   */
   private async getOutputFilename(
     track: { name: string; path: string; format: string; trackNumber?: number; artists?: string[]; album?: string },
     outputDir: string,
     options: ReturnType<typeof resolveSyncOptions>
   ): Promise<string> {
-    if (track.path) {
-      const filename = this.resolveFilenameFromPath(track, options);
-      return getUniqueFilename(outputDir, filename, this.deps.fs);
-    }
-
-    // Fallback: reconstruct from metadata when no server path is available
-    const filename = this.buildFilenameFromMetadata(track, options);
+    const filename = this.resolveCanonicalFilename(track, options);
     return getUniqueFilename(outputDir, filename, this.deps.fs);
   }
 
