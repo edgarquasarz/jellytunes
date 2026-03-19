@@ -47,19 +47,20 @@ function listMountedVolumesFallback(): UsbDevice[] {
       const volumesPath = '/Volumes'
       if (fs.existsSync(volumesPath)) {
         const volumes = fs.readdirSync(volumesPath)
+        const SYSTEM_VOLUMES = new Set(['Macintosh HD', 'Macintosh HD - Data', 'System', 'Preboot', 'Recovery', 'VM', 'Update'])
         for (const vol of volumes) {
+          if (SYSTEM_VOLUMES.has(vol) || vol.startsWith('.')) continue
           const volPath = join(volumesPath, vol)
           try {
             const stats = fs.statSync(volPath)
             if (stats.isDirectory()) {
-              const isRemovable = !['Macintosh HD', 'System'].includes(vol)
               devices.push({
                 device: volPath,
                 displayName: vol,
                 size: 0,
                 mountpoints: [{ path: volPath }],
-                isRemovable,
-                vendorName: isRemovable ? 'External' : 'Internal'
+                isRemovable: true,
+                vendorName: 'External'
               })
             }
           } catch (e) { /* ignore */ }

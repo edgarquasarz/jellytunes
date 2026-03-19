@@ -110,11 +110,7 @@ export function Sidebar({
               >
                 <HardDrive className="w-4 h-4" />
                 <span className="truncate">
-                  {device.productName || `USB ${device.deviceAddress}`}
-                </span>
-                <span className="ml-auto text-xs opacity-60">
-                  {device.vendorId?.toString(16).padStart(4, '0')}:
-                  {device.productId?.toString(16).padStart(4, '0')}
+                  {device.productName || device.displayName || 'USB Device'}
                 </span>
               </button>
             ))
