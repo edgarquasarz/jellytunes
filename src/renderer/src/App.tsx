@@ -202,6 +202,7 @@ function App(): JSX.Element {
               activeDeviceName={deviceSelections.activeDevicePath ? getDestinationName(deviceSelections.activeDevicePath) : null}
               isUsbDevice={deviceSelections.activeDevicePath ? isUsbDevice(deviceSelections.activeDevicePath) : false}
               onGoToDevice={() => setActiveSection('device')}
+              serverUrl={connection.jellyfinConfig?.url}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               searchResults={searchResults}

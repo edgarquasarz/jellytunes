@@ -24,6 +24,7 @@ export interface Artist {
   Id: string
   Name: string
   AlbumCount: number
+  ImageTags?: { Primary?: string }
 }
 
 export interface Album {
@@ -32,12 +33,14 @@ export interface Album {
   AlbumArtist?: string
   ProductionYear?: number
   PremiereDate?: string
+  ImageTags?: { Primary?: string }
 }
 
 export interface Playlist {
   Id: string
   Name: string
   ChildCount?: number
+  ImageTags?: { Primary?: string }
 }
 
 export interface LibraryStats {

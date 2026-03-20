@@ -31,6 +31,7 @@ interface LibraryContentProps {
   activeDeviceName?: string | null
   isUsbDevice?: boolean
   onGoToDevice?: () => void
+  serverUrl?: string
   // Search (managed by parent, API-driven)
   searchQuery: string
   onSearchChange: (q: string) => void
@@ -57,6 +58,7 @@ export function LibraryContent({
   activeDeviceName,
   isUsbDevice,
   onGoToDevice,
+  serverUrl,
   searchQuery,
   onSearchChange,
   searchResults,
@@ -184,7 +186,7 @@ export function LibraryContent({
             No {tabLabel} found for "{searchQuery}"
           </p>
         ) : (
-          <div data-testid="library-content" className="grid gap-4">
+          <div data-testid="library-content" className="grid gap-0.5">
             {activeLibrary === 'artists' && displayArtists.map((artist, idx) => (
               <LibraryItem
                 key={artist.Id || `artist-${idx}`}
@@ -193,6 +195,7 @@ export function LibraryContent({
                 isSelected={selectedTracks.has(artist.Id)}
                 wasSynced={previouslySyncedItems.has(artist.Id)}
                 onToggle={onToggle}
+                serverUrl={serverUrl}
               />
             ))}
 
@@ -204,6 +207,7 @@ export function LibraryContent({
                 isSelected={selectedTracks.has(album.Id)}
                 wasSynced={previouslySyncedItems.has(album.Id)}
                 onToggle={onToggle}
+                serverUrl={serverUrl}
               />
             ))}
 
@@ -215,6 +219,7 @@ export function LibraryContent({
                 isSelected={selectedTracks.has(playlist.Id)}
                 wasSynced={previouslySyncedItems.has(playlist.Id)}
                 onToggle={onToggle}
+                serverUrl={serverUrl}
               />
             ))}
 
