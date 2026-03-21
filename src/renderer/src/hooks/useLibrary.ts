@@ -154,10 +154,11 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
     const baseUrl = jellyfinConfig.url.replace(/\/$/, '')
 
     if (loadedTabs.has(tab)) {
+      // Always restore saved scroll (including 0) so the observer doesn't
+      // inherit the previous tab's scroll position and fire spurious load-mores
       setTimeout(() => {
-        const scrollPos = pagination[tab].scrollPos
-        if (contentScrollRef.current && scrollPos > 0) {
-          contentScrollRef.current.scrollTop = scrollPos
+        if (contentScrollRef.current) {
+          contentScrollRef.current.scrollTop = pagination[tab].scrollPos
         }
       }, 0)
       return
@@ -255,6 +256,9 @@ export function useLibrary(jellyfinConfig: JellyfinConfig | null, userId: string
         ...prev,
         [activeLibrary]: { ...prev[activeLibrary], scrollPos: currentScroll },
       }))
+      // Reset scroll immediately so the intersection observer doesn't see the
+      // outgoing tab's scroll position when it re-attaches for the new tab
+      contentScrollRef.current.scrollTop = 0
     }
     setActiveLibrary(newTab)
   }
