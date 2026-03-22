@@ -144,7 +144,7 @@ export function useSync({
       console.error('Sync error:', error)
       setSyncProgress(null)
       setIsSyncing(false)
-      alert('Sync error: ' + error)
+      alert('Sync error: ' + (error instanceof Error ? error.message : String(error)))
     }
   }
 
@@ -178,7 +178,8 @@ export function useSync({
       const willRemoveCount = [...previouslySyncedItems].filter(id => !selectedTracks.has(id)).length
       setPreviewData({ ...estimate, alreadySyncedCount, willRemoveCount })
       setShowPreview(true)
-    } catch {
+    } catch (err) {
+      console.warn('Size estimation failed, proceeding without preview:', err)
       executeSyncNow()
     } finally {
       setIsLoadingPreview(false)

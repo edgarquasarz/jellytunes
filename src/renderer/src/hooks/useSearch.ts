@@ -12,11 +12,13 @@ export function useSearch(jellyfinConfig: JellyfinConfig | null, userId: string 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null)
   const [isSearching, setIsSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!jellyfinConfig || !userId) return
     if (!searchQuery || searchQuery.length < 2) {
       setSearchResults(null)
+      setSearchError(null)
       return
     }
     setIsSearching(true)
@@ -35,6 +37,7 @@ export function useSearch(jellyfinConfig: JellyfinConfig | null, userId: string 
           albumsRes.ok ? albumsRes.json() : { Items: [] },
           playlistsRes.ok ? playlistsRes.json() : { Items: [] },
         ])
+        setSearchError(null)
         setSearchResults({
           artists: artistsData.Items ?? [],
           albums: albumsData.Items ?? [],
@@ -43,6 +46,7 @@ export function useSearch(jellyfinConfig: JellyfinConfig | null, userId: string 
       } catch (e) {
         console.error('Search error:', e)
         setSearchResults(null)
+        setSearchError(e instanceof Error ? e.message : 'Search failed. Check your connection.')
       } finally {
         setIsSearching(false)
       }
@@ -50,5 +54,5 @@ export function useSearch(jellyfinConfig: JellyfinConfig | null, userId: string 
     return () => clearTimeout(timer)
   }, [searchQuery, jellyfinConfig, userId])
 
-  return { searchQuery, setSearchQuery, searchResults, isSearching }
+  return { searchQuery, setSearchQuery, searchResults, isSearching, searchError }
 }

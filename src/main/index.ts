@@ -1,8 +1,8 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import * as fs from 'fs'
 
 // Import new sync module
@@ -114,9 +114,11 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
   try {
     const platform = process.platform
     if (platform === 'darwin' || platform === 'linux') {
-      const { execSync } = require('child_process')
-      const dfOutput = execSync(`df -k "${devicePath}" 2>/dev/null | tail -1`).toString()
-      const parts = dfOutput.trim().split(/\s+/)
+      // spawnSync with arg array — no shell injection risk
+      const result = spawnSync('df', ['-k', devicePath], { encoding: 'utf8' })
+      const lines = (result.stdout ?? '').trim().split('\n').filter((l: string) => l.trim())
+      const lastLine = lines[lines.length - 1] ?? ''
+      const parts = lastLine.trim().split(/\s+/)
       if (parts.length >= 4) {
         const total = parseInt(parts[1]) * 1024
         const used = parseInt(parts[2]) * 1024
@@ -124,10 +126,13 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
         return { total, free, used }
       }
     } else if (platform === 'win32') {
-      const { execSync } = require('child_process')
       const driveLetter = devicePath.charAt(0)
-      const output = execSync(`wmic logicaldisk where "caption='${driveLetter}:'" get size,freespace /format:csv`, { encoding: 'utf8' })
-      const lines = output.split('\n').filter((line: string) => line.trim() && !line.includes('Node'))
+      const result = spawnSync(
+        'wmic',
+        ['logicaldisk', 'where', `caption='${driveLetter}:'`, 'get', 'size,freespace', '/format:csv'],
+        { encoding: 'utf8' }
+      )
+      const lines = (result.stdout ?? '').split('\n').filter((line: string) => line.trim() && !line.includes('Node'))
       if (lines.length > 0) {
         const parts = lines[lines.length - 1].split(',')
         const free = parseInt(parts[1]) || 0
@@ -141,10 +146,11 @@ async function getDeviceInfo(devicePath: string): Promise<DeviceInfo> {
 
 async function detectFilesystem(devicePath: string): Promise<string> {
   try {
-    const { execSync } = require('child_process')
     const platform = process.platform
     if (platform === 'darwin') {
-      const output: string = execSync(`diskutil info "${devicePath}"`, { encoding: 'utf8', timeout: 5000 })
+      // spawnSync with arg array — no shell injection risk
+      const result = spawnSync('diskutil', ['info', devicePath], { encoding: 'utf8', timeout: 5000 })
+      const output = result.stdout ?? ''
       const match = output.match(/File System Personality\s*:\s*(.+)/i)
       if (match) {
         const t = match[1].trim().toLowerCase()
@@ -155,8 +161,10 @@ async function detectFilesystem(devicePath: string): Promise<string> {
         if (t.includes('hfs')) return 'hfs+'
       }
     } else if (platform === 'linux') {
-      const output: string = execSync(`df -T "${devicePath}" 2>/dev/null | tail -1`, { encoding: 'utf8', timeout: 5000 })
-      const parts = output.trim().split(/\s+/)
+      const result = spawnSync('df', ['-T', devicePath], { encoding: 'utf8', timeout: 5000 })
+      const lines = (result.stdout ?? '').trim().split('\n').filter((l: string) => l.trim())
+      const lastLine = lines[lines.length - 1] ?? ''
+      const parts = lastLine.trim().split(/\s+/)
       if (parts.length >= 2) {
         const t = parts[1].toLowerCase()
         if (t === 'vfat' || t === 'fat32' || t === 'msdos') return 'fat32'
@@ -167,8 +175,12 @@ async function detectFilesystem(devicePath: string): Promise<string> {
       }
     } else if (platform === 'win32') {
       const driveLetter = devicePath.charAt(0)
-      const output: string = execSync(`wmic logicaldisk where "caption='${driveLetter}:'" get filesystem /format:csv`, { encoding: 'utf8', timeout: 5000 })
-      const lines = output.split('\n').filter((l: string) => l.trim() && !l.toLowerCase().includes('filesystem'))
+      const result = spawnSync(
+        'wmic',
+        ['logicaldisk', 'where', `caption='${driveLetter}:'`, 'get', 'filesystem', '/format:csv'],
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      const lines = (result.stdout ?? '').split('\n').filter((l: string) => l.trim() && !l.toLowerCase().includes('filesystem'))
       if (lines.length > 0) {
         const t = (lines[lines.length - 1].split(',').pop() ?? '').trim().toLowerCase()
         if (t === 'fat32') return 'fat32'
@@ -381,6 +393,40 @@ function createWindow(): void {
   const rendererUrl = process.env['ELECTRON_RENDERER_URL']
   if (is.dev && rendererUrl) { mainWindow.loadURL(rendererUrl) } else { mainWindow.loadFile(join(__dirname, '../renderer/index.html')) }
 }
+
+// ---------------------------------------------------------------------------
+// Encrypted session storage (replaces plaintext localStorage)
+// ---------------------------------------------------------------------------
+const SESSION_FILE = () => join(app.getPath('userData'), 'session.enc')
+
+ipcMain.handle('session:save', (_event, plaintext: string) => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      // Fallback: store without encryption if OS keychain unavailable (rare edge case)
+      fs.writeFileSync(SESSION_FILE(), plaintext, 'utf8')
+      return
+    }
+    const encrypted = safeStorage.encryptString(plaintext)
+    fs.writeFileSync(SESSION_FILE(), encrypted)
+  } catch (e) { log.error('Failed to save session:', e) }
+})
+
+ipcMain.handle('session:load', () => {
+  try {
+    const filePath = SESSION_FILE()
+    if (!fs.existsSync(filePath)) return null
+    const raw = fs.readFileSync(filePath)
+    if (!safeStorage.isEncryptionAvailable()) return raw.toString('utf8')
+    return safeStorage.decryptString(raw)
+  } catch (e) { log.error('Failed to load session:', e); return null }
+})
+
+ipcMain.handle('session:clear', () => {
+  try {
+    const filePath = SESSION_FILE()
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+  } catch (e) { log.error('Failed to clear session:', e) }
+})
 
 ipcMain.handle('usb:list', async () => { try { return await listUsbDevices() } catch (error) { log.error('Error in usb:list handler:', error); return [] } })
 ipcMain.handle('usb:getDeviceInfo', async (_event, devicePath: string) => { try { return await getDeviceInfo(devicePath) } catch (error) { log.error('Error getting device info:', error); return { total: 0, free: 0, used: 0 } } })

@@ -80,6 +80,9 @@ export function initDatabase(): void {
     );
   `)
 
+  // Index for device-based queries on sync_history (avoids full table scan as history grows)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sync_history_device ON sync_history(device_id)')
+
   // Migrations: add columns if they don't exist (SQLite has no IF NOT EXISTS for ALTER TABLE)
   try { db.exec('ALTER TABLE synced_files ADD COLUMN item_name TEXT') } catch { /* already exists */ }
   try { db.exec('ALTER TABLE synced_files ADD COLUMN item_type TEXT') } catch { /* already exists */ }

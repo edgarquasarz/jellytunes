@@ -136,6 +136,15 @@ const api = {
     destinationPath: string
   }): Promise<{ removed: number; errors: string[] }> =>
     ipcRenderer.invoke('sync:removeItems', options),
+
+  saveSession: (data: string): Promise<void> =>
+    ipcRenderer.invoke('session:save', data),
+
+  loadSession: (): Promise<string | null> =>
+    ipcRenderer.invoke('session:load'),
+
+  clearSession: (): Promise<void> =>
+    ipcRenderer.invoke('session:clear'),
 }
 
 if (process.contextIsolated) {

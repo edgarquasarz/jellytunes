@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react'
 import type { JellyfinConfig, JellyfinUser } from '../appTypes'
 import { jellyfinHeaders } from '../utils/jellyfin'
 
-const SESSION_KEY = 'jellytunes-session'
-
 interface ConnectionState {
   jellyfinConfig: JellyfinConfig | null
   userId: string | null
@@ -23,9 +21,16 @@ interface SavedSession {
   userId?: string
 }
 
-function loadSession(): SavedSession | null {
+// Session is stored encrypted via main-process safeStorage IPC (not localStorage)
+async function saveSession(url: string, apiKey: string, userId: string): Promise<void> {
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    await window.api.saveSession(JSON.stringify({ url, apiKey, userId }))
+  } catch { /* ignore */ }
+}
+
+async function loadSession(): Promise<SavedSession | null> {
+  try {
+    const raw = await window.api.loadSession()
     if (!raw) return null
     const parsed = JSON.parse(raw)
     return parsed.url && parsed.apiKey ? parsed : null
@@ -34,37 +39,29 @@ function loadSession(): SavedSession | null {
   }
 }
 
-function saveSession(url: string, apiKey: string, userId: string): void {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ url, apiKey, userId }))
-  } catch { /* ignore */ }
-}
-
-function clearSession(): void {
-  try { localStorage.removeItem(SESSION_KEY) } catch { /* ignore */ }
+async function clearSession(): Promise<void> {
+  try { await window.api.clearSession() } catch { /* ignore */ }
 }
 
 export function useJellyfinConnection(
   onConnected: (url: string, apiKey: string, userId: string) => void
 ) {
-  const session = loadSession()
-
   const [state, setState] = useState<ConnectionState>({
     jellyfinConfig: null,
     userId: null,
     isConnected: false,
-    // If session exists, start in connecting state so ConnectingScreen shows immediately
-    isConnecting: !!session,
+    // Start in connecting state — we'll check for a saved session asynchronously on mount
+    isConnecting: true,
     error: null,
     users: [],
     showUserSelector: false,
     pendingConfig: null,
-    urlInput: session?.url ?? '',
-    apiKeyInput: session?.apiKey ?? '',
+    urlInput: '',
+    apiKeyInput: '',
   })
 
   const connectWithUser = async (url: string, apiKey: string, userId: string): Promise<void> => {
-    saveSession(url, apiKey, userId)
+    await saveSession(url, apiKey, userId)
     setState(prev => ({
       ...prev,
       jellyfinConfig: { url, apiKey, userId },
@@ -76,28 +73,34 @@ export function useJellyfinConnection(
     onConnected(url, apiKey, userId)
   }
 
-  // Auto-connect on mount if session is saved
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Auto-connect on mount if an encrypted session is saved
   useEffect(() => {
-    if (!session) return
-    const { url, apiKey, userId } = session
-    const normalized = url.replace(/\/$/, '')
+    loadSession().then(session => {
+      if (!session) {
+        setState(prev => ({ ...prev, isConnecting: false }))
+        return
+      }
 
-    if (userId) {
-      // Fast path: we have userId, just validate server is reachable
-      fetch(`${normalized}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
-        .then(r => r.ok
-          ? connectWithUser(normalized, apiKey, userId)
-          : Promise.reject(new Error(`Server returned ${r.status}`))
-        )
-        .catch(() => {
-          clearSession()
-          setState(prev => ({ ...prev, isConnecting: false, error: 'Could not reconnect. Please log in again.' }))
-        })
-    } else {
-      // Legacy session without userId — try /Users/Me
-      connectToJellyfin(normalized, apiKey)
-    }
+      const { url, apiKey, userId } = session
+      const normalized = url.replace(/\/$/, '')
+      setState(prev => ({ ...prev, urlInput: normalized, apiKeyInput: apiKey }))
+
+      if (userId) {
+        // Fast path: we have userId, just validate server is reachable
+        fetch(`${normalized}/System/Info/Public`, { signal: AbortSignal.timeout(5000) })
+          .then(r => r.ok
+            ? connectWithUser(normalized, apiKey, userId)
+            : Promise.reject(new Error(`Server returned ${r.status}`))
+          )
+          .catch(() => {
+            clearSession()
+            setState(prev => ({ ...prev, isConnecting: false, error: 'Could not reconnect. Please log in again.' }))
+          })
+      } else {
+        // Legacy session without userId — try /Users/Me
+        connectToJellyfin(normalized, apiKey)
+      }
+    })
   }, []) // intentional: run once on mount
 
   const fetchUserList = async (baseUrl: string, apiKey: string): Promise<JellyfinUser[]> => {
@@ -161,7 +164,7 @@ export function useJellyfinConnection(
   }
 
   const disconnect = (): void => {
-    clearSession()
+    clearSession() // fire-and-forget async clear
     setState(prev => ({ ...prev, isConnected: false, jellyfinConfig: null, userId: null, urlInput: '', apiKeyInput: '' }))
   }
 

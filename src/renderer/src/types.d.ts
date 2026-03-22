@@ -90,6 +90,9 @@ interface Api {
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     destinationPath: string
   }) => Promise<{ removed: number; errors: string[] }>
+  saveSession: (data: string) => Promise<void>
+  loadSession: () => Promise<string | null>
+  clearSession: () => Promise<void>
 }
 
 declare global {

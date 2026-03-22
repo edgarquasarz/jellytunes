@@ -110,25 +110,27 @@ export function createNodeFileSystem(): FileSystem {
     },
 
     getFreeSpace: async (path: string) => {
-      // Platform-specific implementation
+      // Platform-specific implementation — uses spawnSync with arg arrays (no shell injection risk)
       const platform = process.platform;
-      
+      const { spawnSync } = require('child_process');
+
       try {
         if (platform === 'darwin' || platform === 'linux') {
-          const { execSync } = require('child_process');
-          const output = execSync(`df -k "${path}" 2>/dev/null | tail -1`).toString();
-          const parts = output.trim().split(/\s+/);
+          const result = spawnSync('df', ['-k', path], { encoding: 'utf8' as const });
+          const lines = (result.stdout ?? '').trim().split('\n').filter((l: string) => l.trim());
+          const lastLine = lines[lines.length - 1] ?? '';
+          const parts = lastLine.trim().split(/\s+/);
           if (parts.length >= 4) {
             return parseInt(parts[3]) * 1024; // Convert KB to bytes
           }
         } else if (platform === 'win32') {
-          const { execSync } = require('child_process');
           const driveLetter = path.charAt(0);
-          const output = execSync(
-            `wmic logicaldisk where "caption='${driveLetter}:'" get freespace /format:csv`,
-            { encoding: 'utf8' }
+          const result = spawnSync(
+            'wmic',
+            ['logicaldisk', 'where', `caption='${driveLetter}:'`, 'get', 'freespace', '/format:csv'],
+            { encoding: 'utf8' as const }
           );
-          const lines = output.split('\n').filter((l: string) => l.trim() && !l.includes('Node'));
+          const lines = (result.stdout ?? '').split('\n').filter((l: string) => l.trim() && !l.includes('Node'));
           if (lines.length > 0) {
             const parts = lines[lines.length - 1].split(',');
             return parseInt(parts[1]) || 0;
@@ -137,7 +139,7 @@ export function createNodeFileSystem(): FileSystem {
       } catch {
         // Fallback: assume unlimited space
       }
-      
+
       return Number.MAX_SAFE_INTEGER;
     },
   };

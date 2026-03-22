@@ -177,18 +177,14 @@ class SyncApiImpl implements SyncApi {
   }
 
   async getArtistTracks(artistId: string): Promise<TrackInfo[]> {
-    // First get albums, then tracks for each album
+    // First get albums, then fetch all album tracks in parallel (avoids N+1 serial calls)
     const albumsEndpoint = `/Users/${this.userId}/Items?AlbumArtistIds=${artistId}&includeItemTypes=MusicAlbum&Recursive=true&Fields=Path,MediaSources`;
     const albumsData = await this.request<{ Items: JellyfinAlbumItem[] }>(albumsEndpoint);
-    
-    const tracks: TrackInfo[] = [];
-    
-    for (const album of albumsData.Items ?? []) {
-      const albumTracks = await this.getAlbumTracks(album.Id);
-      tracks.push(...albumTracks);
-    }
-    
-    return tracks;
+
+    const albumTrackArrays = await Promise.all(
+      (albumsData.Items ?? []).map(album => this.getAlbumTracks(album.Id))
+    );
+    return albumTrackArrays.flat();
   }
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
@@ -219,44 +215,36 @@ class SyncApiImpl implements SyncApi {
     itemIds: string[],
     itemTypes: Map<string, ItemType>
   ): Promise<{ tracks: TrackInfo[]; errors: string[] }> {
+    // Fetch all items in parallel instead of sequentially
+    const results = await Promise.allSettled(
+      itemIds.map(async (itemId) => {
+        const itemType = itemTypes.get(itemId);
+        if (!itemType) throw new Error(`Unknown item type for ID: ${itemId}`);
+        switch (itemType) {
+          case 'artist': return await this.getArtistTracks(itemId);
+          case 'album': return await this.getAlbumTracks(itemId);
+          case 'playlist': return await this.getPlaylistTracks(itemId);
+          default: throw new Error(`Unsupported item type: ${itemType}`);
+        }
+      })
+    );
+
     const tracks: TrackInfo[] = [];
     const errors: string[] = [];
-    
-    for (const itemId of itemIds) {
-      const itemType = itemTypes.get(itemId);
-      
-      if (!itemType) {
-        errors.push(`Unknown item type for ID: ${itemId}`);
-        continue;
-      }
-      
-      try {
-        let itemTracks: TrackInfo[];
-        
-        switch (itemType) {
-          case 'artist':
-            itemTracks = await this.getArtistTracks(itemId);
-            break;
-          case 'album':
-            itemTracks = await this.getAlbumTracks(itemId);
-            break;
-          case 'playlist':
-            itemTracks = await this.getPlaylistTracks(itemId);
-            break;
-          default:
-            errors.push(`Unsupported item type: ${itemType}`);
-            continue;
-        }
-        
-        tracks.push(...itemTracks);
-      } catch (error) {
-        const message = error instanceof ApiError
-          ? `Failed to fetch ${itemType} ${itemId}: ${error.message}`
-          : `Error processing ${itemType} ${itemId}`;
-        errors.push(message);
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      const itemId = itemIds[i];
+      const itemType = itemTypes.get(itemId) ?? 'unknown';
+      if (result.status === 'fulfilled') {
+        tracks.push(...result.value);
+      } else {
+        const err = result.reason;
+        errors.push(err instanceof ApiError
+          ? `Failed to fetch ${itemType} ${itemId}: ${err.message}`
+          : `Error processing ${itemType} ${itemId}`
+        );
       }
     }
-    
     return { tracks, errors };
   }
 
