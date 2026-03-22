@@ -5,30 +5,32 @@ const config = {
       snippetInterface: 'async-await',
     },
     paths: ['tests/bdd/features/**/*.feature'],
-    require: ['tests/bdd/dist/steps/**/*.js', 'tests/bdd/dist/support/**/*.js'],
+    requireModule: ['ts-node/register'],
+    require: ['tests/bdd/steps/**/*.ts', 'tests/bdd/support/**/*.ts'],
     publishQuiet: true,
     worldParameters: {
       headless: true,
     },
   },
-  
-  // Perfil para desarrollo (con UI visible)
+
+  // Development profile (visible UI)
   dev: {
     worldParameters: {
       headless: false,
       slowMo: 100,
     },
   },
-  
-  // Perfil para CI (modo headless)
+
+  // CI profile (headless, JSON report)
   ci: {
     paths: ['tests/bdd/features/**/*.feature'],
-    require: ['tests/bdd/dist/steps/**/*.js', 'tests/bdd/dist/support/**/*.js'],
+    requireModule: ['ts-node/register'],
+    require: ['tests/bdd/steps/**/*.ts', 'tests/bdd/support/**/*.ts'],
     format: ['json:./tests/bdd/reports/cucumber-report.json'],
     worldParameters: {
       headless: true,
     },
   },
-};
+}
 
-module.exports = config;
+module.exports = config

@@ -6,8 +6,8 @@ let electronApp: ElectronApplication | null = null;
 
 // Función para encontrar el ejecutable de Electron
 function getElectronPath(): string {
-  // Go up from tests/bdd/support/ to project root: ../../../.. = 4 levels
-  const projectPath = path.resolve(__dirname, '../../../../');
+  // Go up from tests/bdd/support/ to project root: ../../.. = 3 levels
+  const projectPath = path.resolve(__dirname, '../../../');
   
   // Check for packaged app first
   const macAppPath = path.join(projectPath, 'release/mac/Jellysync.app/Contents/MacOS/Jellysync');
@@ -25,8 +25,8 @@ function getElectronPath(): string {
 }
 
 export async function launchApp(): Promise<ElectronApplication> {
-  // Go up from tests/bdd/support/ to project root: ../../../.. = 4 levels
-  const projectPath = path.resolve(__dirname, '../../../../');
+  // Go up from tests/bdd/support/ to project root: ../../.. = 3 levels
+  const projectPath = path.resolve(__dirname, '../../../');
   const electronPath = getElectronPath();
   
   const isPackaged = electronPath.includes('Jellysync.app');

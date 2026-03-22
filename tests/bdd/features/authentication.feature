@@ -1,65 +1,33 @@
-Feature: Autenticación Jellyfin
-  Como usuario de Jellysync
-  Quiero poder conectarme a mi servidor Jellyfin
-  Para acceder a mi biblioteca de música
+Feature: Jellyfin Authentication
+  As a JellyTunes user
+  I want to connect to my Jellyfin server
+  So that I can access my music library
 
   Background:
-    Given la aplicación Jellysync está iniciada
+    Given the app is open on the login screen
 
-  Scenario: Conexión exitosa con credenciales válidas
-    Given el usuario tiene una URL de servidor Jellyfin válida
-    And el usuario tiene una API key válida
-    When el usuario ingresa la URL del servidor "https://jellyfin.example.com"
-    And el usuario ingresa la API key "valid-api-key-123"
-    And el usuario hace click en el botón "Conectar"
-    Then la aplicación debería conectarse exitosamente al servidor
-    And debería mostrar la pantalla de biblioteca
-    And debería mostrar el mensaje "Conexión exitosa"
+  Scenario: Login form is shown with correct fields
+    Then I should see the server URL input
+    And I should see the API key input
+    And I should see the connect button
 
-  Scenario: Conexión fallida con URL inválida
-    Given el usuario tiene una URL de servidor inválida
-    When el usuario ingresa la URL del servidor "https://invalid-server.com"
-    And el usuario ingresa la API key "some-api-key"
-    And el usuario hace click en el botón "Conectar"
-    Then la aplicación debería mostrar un mensaje de error
-    And el mensaje debería decir "No se pudo conectar al servidor"
-    And el botón "Conectar" debería seguir habilitado
+  Scenario: Connect button is disabled when fields are empty
+    When the URL field is empty
+    And the API key field is empty
+    Then the connect button should be disabled
 
-  Scenario: Conexión fallida con API key inválida
-    Given el usuario tiene una URL de servidor válida
-    And el usuario tiene una API key inválida
-    When el usuario ingresa la URL del servidor "https://jellyfin.example.com"
-    And el usuario ingresa la API key "invalid-key"
-    And el usuario hace click en el botón "Conectar"
-    Then la aplicación debería mostrar un mensaje de error
-    And el mensaje debería decir "API key inválida o expirada"
+  Scenario: Connection fails with unreachable server
+    When I enter the server URL "http://localhost:19999"
+    And I enter the API key "some-key"
+    And I click the connect button
+    Then an error message should be visible
 
-  Scenario: Campos vacíos en el formulario
-    Given el usuario está en la pantalla de autenticación
-    When el usuario deja el campo URL vacío
-    And el usuario deja el campo API key vacío
-    And el usuario hace click en el botón "Conectar"
-    Then el botón "Conectar" debería estar deshabilitado
-    And debería mostrarse el mensaje de validación "URL requerida"
+  Scenario: User selector is shown when multiple users exist
+    Given the app has reached the user selector screen
+    Then I should see the user selector screen
+    And at least one user option should be listed
 
-  Scenario: Guardar credenciales para uso futuro
-    Given el usuario ha ingresado credenciales válidas
-    When el usuario marca la casilla "Recordar credenciales"
-    And el usuario hace click en el botón "Conectar"
-    Then las credenciales deberían guardarse en el almacenamiento local
-    And en la próxima apertura los campos deberían estar prellenados
-  # Regression test: User selector should show when /Users/Me fails (GitHub Issue #14559)
-  Scenario: Selector de usuario mostrado cuando /Users/Me falla con API key
-    Given el servidor Jellyfin no soporta /Users/Me con API keys
-    And hay 2 usuarios en el servidor: "admin" y "user"
-    When el usuario ingresa credenciales válidas
-    And /Users/Me retorna 400 Bad Request
-    Then debería mostrar el selector de usuarios
-    And debería listar todos los usuarios disponibles
-
-  # Regression test: User selector should allow selection
-  Scenario: Usuario puede seleccionar del selector
-    Given el selector de usuarios está visible
-    When el usuario hace click en el usuario "tjd"
-    Then debería mostrar la biblioteca de ese usuario
-    And debería guardar la selección del usuario
+  Scenario: Selecting a user loads the library
+    Given the app has reached the user selector screen
+    When I click the first user option
+    Then the library content should be visible

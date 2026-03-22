@@ -1,13 +1,7 @@
 name: BDD Tests
 
 on:
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 3 * * *'  # nightly 3am
-  workflow_dispatch:      # manual
-  release:
-    types: [published]
+  workflow_dispatch:  # manual only — BDD tests require a real Electron environment, run locally
 
 jobs:
   bdd-tests:

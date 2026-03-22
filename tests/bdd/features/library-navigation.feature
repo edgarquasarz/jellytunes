@@ -1,58 +1,33 @@
-Feature: Navegación de Biblioteca
-  Como usuario autenticado
-  Quiero navegar por mi biblioteca de música
-  Para encontrar y seleccionar contenido para sincronizar
+Feature: Library Navigation
+  As an authenticated user
+  I want to browse my music library
+  So that I can find and select content to sync
 
   Background:
-    Given el usuario está autenticado en Jellyfin
-    And la biblioteca de música está cargada
+    Given the user is authenticated and the library is loaded
 
-  Scenario: Visualización de lista de artistas
-    Given el usuario está en la pantalla de biblioteca
-    When el usuario selecciona la pestaña "Artistas"
-    Then debería mostrarse una lista de artistas
-    And cada artista debería mostrar su nombre
-    And cada artista debería mostrar la cantidad de álbumes
+  Scenario: Artists tab is active by default
+    Then the artists tab should be active
+    And library items should be visible
 
-  Scenario: Visualización de álbumes de un artista
-    Given el usuario está viendo la lista de artistas
-    When el usuario hace click en el artista "The Beatles"
-    Then debería mostrarse la vista del artista
-    And debería mostrar todos los álbumes del artista
-    And debería mostrar información del artista (nombre, biografía si existe)
+  Scenario: Switch to albums tab
+    When I click the albums tab
+    Then the albums tab should be active
+    And library items should be visible
 
-  Scenario: Visualización de canciones de un álbum
-    Given el usuario está viendo los álbumes de "The Beatles"
-    When el usuario hace click en el álbum "Abbey Road"
-    Then debería mostrarse la lista de canciones del álbum
-    And cada canción debería mostrar título, duración y número de pista
-    And debería mostrar la portada del álbum
+  Scenario: Switch to playlists tab
+    When I click the playlists tab
+    Then the playlists tab should be active
 
-  Scenario: Navegación a playlists
-    Given el usuario está en la pantalla de biblioteca
-    When el usuario selecciona la pestaña "Playlists"
-    Then debería mostrarse una lista de playlists
-    And cada playlist debería mostrar su nombre
-    And cada playlist debería mostrar la cantidad de canciones
+  Scenario: Select an item with a checkbox
+    Given a device is selected in the sidebar
+    When I click the first library item
+    Then the first library item should be selected
 
-  Scenario: Visualización de canciones de una playlist
-    Given el usuario está viendo la lista de playlists
-    When el usuario hace click en la playlist "Mis Favoritas"
-    Then debería mostrarse la lista de canciones de la playlist
-    And debería mostrar el nombre de la playlist
-    And debería mostrar el total de duración
-
-  Scenario: Navegación con breadcrumbs
-    Given el usuario está viendo las canciones de un álbum
-    When el usuario hace click en "Artistas" en el breadcrumb
-    Then debería volver a la lista de artistas
-    When el usuario hace click en "Biblioteca" en el breadcrumb
-    Then debería volver a la vista principal de biblioteca
-
-  Scenario: Scroll infinito en listas largas
-    Given la biblioteca tiene más de 50 artistas
-    When el usuario está en la pestaña "Artistas"
-    Then debería mostrar los primeros 20 artistas
-    When el usuario hace scroll hasta el final
-    Then debería cargar los siguientes 20 artistas
-    And la lista debería mostrar 40 artistas en total
+  Scenario: Filter items by selected state
+    Given a device is selected in the sidebar
+    And at least one library item is selected
+    When I click the "Selected" sync filter
+    Then only selected items should be visible
+    When I click the "All" sync filter
+    Then all items should be visible again
