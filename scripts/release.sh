@@ -46,6 +46,16 @@ echo "Building application..."
 pnpm run build
 pnpm exec electron-builder --publish never
 
+# Build release notes from commits since last tag
+PREV_TAG="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")"
+if [[ -n "$PREV_TAG" ]]; then
+  NOTES="## What's Changed"$'\n\n'
+  NOTES+="$(git log --pretty=format:'- %s' "${PREV_TAG}..HEAD~1")"
+  RELEASE_NOTES_FLAG=(--notes "$NOTES")
+else
+  RELEASE_NOTES_FLAG=(--generate-notes)
+fi
+
 # Collect release assets
 RELEASE_DIR="release"
 ASSETS=()
@@ -58,12 +68,12 @@ if [[ ${#ASSETS[@]} -eq 0 ]]; then
   echo "Creating release without assets..."
   gh release create "v$NEW_VERSION" \
     --title "v$NEW_VERSION" \
-    --generate-notes
+    "${RELEASE_NOTES_FLAG[@]}"
 else
   echo "Uploading ${#ASSETS[@]} asset(s)..."
   gh release create "v$NEW_VERSION" \
     --title "v$NEW_VERSION" \
-    --generate-notes \
+    "${RELEASE_NOTES_FLAG[@]}" \
     "${ASSETS[@]}"
 fi
 
