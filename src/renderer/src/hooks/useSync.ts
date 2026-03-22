@@ -34,6 +34,9 @@ export function useSync({
   const [showPreview, setShowPreview] = useState(false)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+  const [syncSuccessData, setSyncSuccessData] = useState<{
+    tracksCopied: number; tracksSkipped: number; removed: number; errors: string[]
+  } | null>(null)
 
   const handleSelectSyncFolder = async (path?: string): Promise<void> => {
     if (path) {
@@ -134,11 +137,14 @@ export function useSync({
       if (result.success) {
         const updatedItems = await window.api.getSyncedItems(syncFolder)
         setPreviouslySyncedItems(updatedItems)
-        const deleteInfo = toDeleteIds.length > 0 ? `\nRemoved: ${toDeleteIds.length} item(s)` : ''
-        const skippedInfo = result.tracksSkipped > 0 ? `\nSkipped (already up-to-date): ${result.tracksSkipped}` : ''
-        alert(`Sync complete!\n\nTracks copied: ${result.tracksCopied}${skippedInfo}${deleteInfo}\nErrors: ${result.errors.length}\n\n${result.errors.length > 0 ? 'Errors:\n' + result.errors.slice(0, 5).join('\n') : ''}`)
+        setSyncSuccessData({
+          tracksCopied: result.tracksCopied,
+          tracksSkipped: result.tracksSkipped ?? 0,
+          removed: toDeleteIds.length,
+          errors: result.errors,
+        })
       } else {
-        alert(`Sync failed:\n\n${result.errors.join('\n')}`)
+        setSyncSuccessData({ tracksCopied: 0, tracksSkipped: 0, removed: 0, errors: result.errors })
       }
     } catch (error) {
       unsubscribe?.()
@@ -208,6 +214,8 @@ export function useSync({
     setShowPreview,
     previewData,
     isLoadingPreview,
+    syncSuccessData,
+    setSyncSuccessData,
     handleSelectSyncFolder,
     executeSyncNow,
     handleStartSync,

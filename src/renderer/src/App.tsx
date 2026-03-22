@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { ActiveSection, LibraryTab, Artist, Album, Playlist } from './appTypes'
 
 import { AppHeader } from './components/AppHeader'
+import { SyncSuccessModal } from './components/SyncSuccessModal'
 import { Sidebar } from './components/Sidebar'
 import { LibraryContent } from './components/LibraryContent'
 import { DeviceSyncPanel } from './components/DeviceSyncPanel'
@@ -296,6 +297,16 @@ function App(): JSX.Element {
         activeDeviceName={deviceSelections.activeDevicePath ? getDestinationName(deviceSelections.activeDevicePath) : null}
         isUsbDevice={deviceSelections.activeDevicePath ? isUsbDevice(deviceSelections.activeDevicePath) : false}
       />
+
+      {sync.syncSuccessData && (
+        <SyncSuccessModal
+          tracksCopied={sync.syncSuccessData.tracksCopied}
+          tracksSkipped={sync.syncSuccessData.tracksSkipped}
+          removed={sync.syncSuccessData.removed}
+          errors={sync.syncSuccessData.errors}
+          onClose={() => sync.setSyncSuccessData(null)}
+        />
+      )}
     </div>
   )
 }

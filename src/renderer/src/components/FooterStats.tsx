@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { LibraryStats, PaginationState, Artist, Album, Playlist } from '../appTypes'
 import { HardDrive, Folder } from 'lucide-react'
 
@@ -20,6 +21,14 @@ export function FooterStats({
   activeDeviceName,
   isUsbDevice,
 }: FooterStatsProps): JSX.Element {
+  const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; releaseUrl: string } | null>(null)
+
+  useEffect(() => {
+    window.api.checkForUpdates().then(result => {
+      if (result.updateAvailable) setUpdateInfo({ latestVersion: result.latestVersion, releaseUrl: result.releaseUrl })
+    }).catch(() => {})
+  }, [])
+
   const libraryText = stats
     ? `${stats.ArtistCount.toLocaleString()} artists · ${stats.AlbumCount.toLocaleString()} albums · ${stats.PlaylistCount.toLocaleString()} playlists`
     : `${pagination.artists.total > 0 ? pagination.artists.total : artists.length} artists · ${pagination.albums.total > 0 ? pagination.albums.total : albums.length} albums · ${pagination.playlists.total > 0 ? pagination.playlists.total : playlists.length} playlists`
@@ -28,7 +37,18 @@ export function FooterStats({
 
   return (
     <footer className="h-10 border-t border-jf-border flex items-center justify-between px-4 text-xs text-zinc-500">
-      <span>{libraryText}</span>
+      <span className="flex items-center gap-3">
+        {libraryText}
+        {updateInfo && (
+          <a
+            href="#"
+            onClick={e => { e.preventDefault(); window.open(updateInfo.releaseUrl) }}
+            className="text-jf-purple-light hover:text-white transition-colors"
+          >
+            v{updateInfo.latestVersion} available ↗
+          </a>
+        )}
+      </span>
       {activeDeviceName ? (
         <span className="flex items-center gap-1.5 text-jf-purple-light">
           <DeviceIcon className="w-3 h-3" />

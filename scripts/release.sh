@@ -79,4 +79,4 @@ fi
 
 echo ""
 echo "Release v$NEW_VERSION published!"
-echo "https://github.com/edgarquasarz/jellytunes/releases/tag/v$NEW_VERSION"
+echo "https://github.com/oriaflow-labs/jellytunes/releases/tag/v$NEW_VERSION"

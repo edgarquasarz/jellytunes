@@ -156,6 +156,10 @@ const api = {
 
   // Open a pre-filled GitHub issue in the browser with recent log lines
   reportBug: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('bug:report'),
+
+  // Check for updates via GitHub Releases API (max once per 24h, no telemetry)
+  checkForUpdates: (): Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }> =>
+    ipcRenderer.invoke('app:checkForUpdates'),
 }
 
 if (process.contextIsolated) {

@@ -713,6 +713,31 @@ ipcMain.handle('sync:removeItems', async (_event, options: {
   }
 })
 
+// Update checker — queries GitHub API at most once per 24h, no telemetry
+let lastUpdateCheck = 0
+let cachedUpdateInfo: { updateAvailable: boolean; latestVersion: string; releaseUrl: string } | null = null
+
+ipcMain.handle('app:checkForUpdates', async () => {
+  const now = Date.now()
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000
+  if (cachedUpdateInfo && now - lastUpdateCheck < ONE_DAY_MS) return cachedUpdateInfo
+  try {
+    const { net } = await import('electron')
+    const request = net.fetch('https://api.github.com/repos/oriaflow-labs/jellytunes/releases/latest', {
+      headers: { 'User-Agent': `JellyTunes/${app.getVersion()}`, 'Accept': 'application/vnd.github+json' }
+    })
+    const data = await (await request).json() as { tag_name?: string; html_url?: string }
+    const latestVersion = (data.tag_name ?? '').replace(/^v/, '')
+    const currentVersion = app.getVersion()
+    const updateAvailable = latestVersion !== '' && latestVersion !== currentVersion
+    cachedUpdateInfo = { updateAvailable, latestVersion, releaseUrl: data.html_url ?? '' }
+    lastUpdateCheck = now
+    return cachedUpdateInfo
+  } catch {
+    return { updateAvailable: false, latestVersion: '', releaseUrl: '' }
+  }
+})
+
 app.whenReady().then(() => {
   log.info('App ready')
   initDatabase()
