@@ -89,7 +89,8 @@
         "zip"
       ],
       "icon": "assets/icon.icns",
-      "compression": "maximum"
+      "compression": "maximum",
+      "identity": null
     },
     "win": {
       "target": [
