@@ -1,6 +1,7 @@
 # JellyTunes
 
 [![BDD Tests](https://github.com/edgarquasarz/jellytunes/actions/workflows/bdd-tests.yml/badge.svg)](https://github.com/edgarquasarz/jellytunes/actions/workflows/bdd-tests.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 Desktop app that syncs music libraries from a [Jellyfin](https://jellyfin.org) media server to portable devices (USB drives, SD cards). Built with Electron + React.
 
@@ -56,3 +57,7 @@ Three Electron processes plus a standalone sync engine:
 - **Preload** (`src/preload/`) — typed IPC bridge between main and renderer
 - **Renderer** (`src/renderer/`) — React UI for library navigation, device selection, and sync progress
 - **Sync module** (`src/sync/`) — dependency-injected sync engine (API client, file ops, FFmpeg converter); fully unit-testable without hitting the network or filesystem
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.

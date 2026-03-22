@@ -4,7 +4,7 @@
   "description": "Sincronizador de música Jellyfin → dispositivos MP3/FLAC",
   "main": "dist/main/index.js",
   "author": "JellyTunes Team",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "electron-vite build && electron-vite dev",
     "build": "electron-vite build",
