@@ -4,3 +4,4 @@ release/
 *.log
 test-*
 **/.DS_Store
+electron.vite.config.*.mjs
