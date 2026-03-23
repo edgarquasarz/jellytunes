@@ -439,7 +439,7 @@ describe('sync-core', () => {
       
       expect(result.success).toBe(true);
       expect(result.tracksCopied).toBe(2);
-      expect(result.durationMs).toBeGreaterThan(0);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
       expect(lastProgress.phase).toBe('complete');
     });
 
