@@ -1,6 +1,6 @@
 {
   "name": "jellytunes",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Sincronizador de música Jellyfin → dispositivos MP3/FLAC",
   "main": "dist/main/index.js",
   "author": {
