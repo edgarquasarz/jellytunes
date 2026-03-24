@@ -14,8 +14,10 @@
   <a href="https://github.com/oriaflow-labs/jellytunes/releases"><img src="https://img.shields.io/github/downloads/oriaflow-labs/jellytunes/total" alt="Total Downloads" /></a>
   &nbsp;
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
-  &nbsp;
-  <a href="https://ko-fi.com/oriaflowlabs"><img src="https://img.shields.io/badge/Support-Ko--fi-FF5E5B?logo=ko-fi&logoColor=white" alt="Support on Ko-fi" /></a>
+</p>
+
+<p align="center">
+  <a href="https://ko-fi.com/oriaflowlabs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi" /></a>
 </p>
 
 ---
