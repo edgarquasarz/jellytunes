@@ -56,6 +56,7 @@ import {
   ProgressStats,
   SyncCancelledError,
 } from './sync-progress';
+import { buildTempPaths } from './temp-path';
 
 /**
  * Validate that a path stays within allowed boundaries (prevent path traversal)
@@ -730,9 +731,7 @@ class SyncCoreImpl {
     bitrate: '128k' | '192k' | '320k'
   ): Promise<void> {
     const timestamp = Date.now();
-    const safeName = track.name.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
-    const tempPath = `/tmp/jellytunes_${timestamp}_${safeName}.mp3`;
-    const sourcePath = `/tmp/jellytunes_src_${timestamp}.tmp`;
+    const { sourcePath, tempPath } = buildTempPaths(track.name, timestamp);
     
     // Track temp files for cleanup
     const tempFiles: string[] = [tempPath, sourcePath];
