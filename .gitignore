@@ -5,3 +5,4 @@ release/
 test-*
 **/.DS_Store
 electron.vite.config.*.mjs
+.claude/
