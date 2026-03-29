@@ -281,7 +281,7 @@ export function DeviceSyncPanel({
             <div>
               <span className="text-sm font-medium">Convert to MP3</span>
               <p className="text-xs text-zinc-500 mt-0.5">
-                {convertToMp3 ? `FLAC/lossless → MP3 ${bitrate}` : 'Copy files as-is'}
+                {convertToMp3 ? `FLAC/lossless + MP3 above ${bitrate} → MP3 ${bitrate}` : 'Copy files as-is'}
               </p>
             </div>
             <button
