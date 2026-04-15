@@ -61,6 +61,11 @@ export interface SyncInput {
 export type FilesystemType = 'fat32' | 'exfat' | 'ntfs' | 'apfs' | 'hfs+' | 'ext4' | 'unknown';
 
 /**
+ * Cover art handling mode
+ */
+export type CoverArtMode = 'embed' | 'companion' | 'off';
+
+/**
  * Optional sync behavior settings
  */
 export interface SyncOptions {
@@ -74,6 +79,30 @@ export interface SyncOptions {
   preserveStructure?: boolean;
   /** Destination filesystem — enables compatibility sanitization for FAT32/exFAT/NTFS */
   filesystemType?: FilesystemType;
+  /** Embed metadata from Jellyfin (default: true) */
+  embedMetadata?: boolean;
+  /** Cover art mode (default: 'embed') */
+  coverArtMode?: CoverArtMode;
+}
+
+/**
+ * Metadata fields to write to audio files via FFmpeg.
+ * Jellyfin takes priority in all fields; missing fields are skipped (not cleared).
+ */
+export interface TrackMetadata {
+  title?: string;
+  artist?: string;
+  albumArtist?: string;
+  album?: string;
+  year?: string;
+  trackNumber?: string;
+  discNumber?: string;
+  genres?: string[];
+  /** Additional fields preserved from original file (not from Jellyfin) */
+  composer?: string;
+  isrc?: string;
+  copyright?: string;
+  comment?: string;
 }
 
 /**
@@ -92,6 +121,12 @@ export interface TrackInfo {
   albumArtist?: string;
   /** Production year */
   year?: number;
+  /** Genre(s) */
+  genres?: string[];
+  /** Album ID on Jellyfin server (used for cover art caching) */
+  albumId?: string;
+  /** Parent item ID this track belongs to (artist/album/playlist) — set by getTracksForItems */
+  parentItemId?: string;
   /** File path on Jellyfin server */
   path: string;
   /** Audio format (mp3, flac, m4a, etc.) */
@@ -133,6 +168,8 @@ export interface SyncProgress {
   totalBytes?: number;
   /** Error message if phase is 'error' */
   errorMessage?: string;
+  /** Non-blocking warning message (e.g. cover art unavailable) */
+  warning?: string;
 }
 
 /**
@@ -154,6 +191,12 @@ export interface SyncResult {
   tracksCopied: number;
   /** Number of tracks skipped (already up-to-date on device) */
   tracksSkipped: number;
+  /** Number of tracks re-tagged (metadata-only update, no re-download) */
+  tracksRetagged: number;
+  /** Number of tracks moved/renamed (album rename detected) */
+  tracksMoved: number;
+  /** Number of orphaned tracks removed from device */
+  tracksRemoved: number;
   /** Track IDs that failed to sync */
   tracksFailed: string[];
   /** Detailed error messages */
@@ -170,7 +213,7 @@ export interface SyncResult {
  * Size estimation result
  */
 export interface SizeEstimate {
-  /** Total size in bytes */
+  /** Total size in bytes (synced + new) */
   totalBytes: number;
   /** Number of tracks */
   trackCount: number;
@@ -178,6 +221,10 @@ export interface SizeEstimate {
   formatBreakdown: Map<string, number>;
   /** Breakdown by item type */
   typeBreakdown: Map<ItemType, number>;
+  /** Size of tracks already synced on device */
+  syncedMusicBytes: number;
+  /** Size of tracks not yet synced */
+  newMusicBytes: number;
 }
 
 // =============================================================================
@@ -211,9 +258,12 @@ export interface DestinationValidation {
 export interface JellyfinTrackItem {
   Id: string;
   Name: string;
+  Album?: string;
   AlbumName?: string;
   AlbumArtist?: string;
   Artists?: string[];
+  Genres?: string[];
+  AlbumId?: string;
   Path?: string;
   MediaSources?: Array<{
     Path: string;
@@ -270,4 +320,68 @@ export interface FetchedTracks {
   sourceItemId: string;
   sourceItemType: ItemType;
   errors: string[];
+}
+
+// =============================================================================
+// DIFF ENGINE (Phase 2)
+// =============================================================================
+
+/**
+ * Types of changes detected during diff analysis.
+ */
+export type TrackChangeType =
+  | 'new'
+  | 'metadata_changed'
+  | 'cover_art_changed'
+  | 'bitrate_changed'
+  | 'removed'
+  | 'path_changed'
+  | 'unchanged';
+
+/**
+ * Individual track change record.
+ */
+export interface TrackChange {
+  trackId: string;
+  trackName: string;
+  changeType: TrackChangeType;
+  details?: string;
+}
+
+/**
+ * Diff result for a single item (artist/album/playlist).
+ */
+export interface ItemDiff {
+  itemId: string;
+  itemName: string;
+  itemType: ItemType;
+  changes: TrackChange[];
+  summary: {
+    new: number;
+    metadataChanged: number;
+    removed: number;
+    pathChanged: number;
+    unchanged: number;
+  };
+  /** For artist items: per-album breakdown of which albums have changes */
+  subItems?: Array<{
+    itemId: string;
+    summary: { newTracks: number; metadataChanged: number; pathChanged: number };
+  }>;
+}
+
+/**
+ * Complete diff analysis result for a sync operation.
+ */
+export interface SyncDiffResult {
+  items: ItemDiff[];
+  totals: {
+    newTracks: number;
+    metadataChanged: number;
+    removed: number;
+    pathChanged: number;
+    unchanged: number;
+  };
+  /** Item-level errors encountered during diff (e.g. API failures) */
+  itemErrors?: { itemId: string; itemName: string; error: string }[];
 }

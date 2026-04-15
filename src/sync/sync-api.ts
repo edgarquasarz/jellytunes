@@ -5,8 +5,8 @@
  * Designed to be mockable for unit tests.
  */
 
-import type { SyncConfig, TrackInfo, ItemType } from './types';
-import type { JellyfinTrackItem, JellyfinAlbumItem, JellyfinPlaylistItem } from './types';
+import type { TrackInfo, ItemType, SyncLogger } from './types';
+import type { JellyfinTrackItem, JellyfinAlbumItem } from './types';
 
 /**
  * API client configuration
@@ -22,6 +22,8 @@ export interface ApiClientConfig {
   timeout?: number;
   /** Custom fetch implementation (for testing) */
   fetch?: typeof fetch;
+  /** Logger for debug output */
+  logger?: SyncLogger;
 }
 
 /**
@@ -81,6 +83,9 @@ export interface SyncApi {
 
   /** Stream item from Jellyfin server as a Node.js Readable */
   downloadItemStream(itemId: string): Promise<NodeJS.ReadableStream>;
+
+  /** Get primary cover art image for an item */
+  getCoverArt(itemId: string): Promise<Buffer>;
 }
 
 /**
@@ -120,6 +125,7 @@ class SyncApiImpl implements SyncApi {
   private timeout: number;
   private fetchFn: typeof fetch;
   private limiter = new ConcurrencyLimiter(API_CONCURRENCY);
+  private logger?: SyncLogger;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
@@ -127,6 +133,7 @@ class SyncApiImpl implements SyncApi {
     this.userId = config.userId;
     this.timeout = config.timeout ?? 30000;
     this.fetchFn = config.fetch ?? fetch;
+    this.logger = config.logger;
   }
 
   private getHeaders(): Record<string, string> {
@@ -220,21 +227,23 @@ class SyncApiImpl implements SyncApi {
 
   async getAlbumTracks(albumId: string): Promise<TrackInfo[]> {
     const [albumData, tracksData] = await Promise.all([
-      this.request<{ ProductionYear?: number }>(`/Users/${this.userId}/Items/${albumId}`)
-        .catch(() => ({ ProductionYear: undefined })),
+      this.request<{ Name?: string; ProductionYear?: number }>(`/Users/${this.userId}/Items/${albumId}`)
+        .catch(() => ({ Name: undefined, ProductionYear: undefined })),
       this.request<{ Items: JellyfinTrackItem[] }>(
-        `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId`
+        `/Users/${this.userId}/Items?parentId=${albumId}&includeItemTypes=Audio&Recursive=true&Fields=Path,MediaSources,AlbumId,Genres,Artists,AlbumArtist,Album`
       ),
     ]);
 
+    this.logger?.debug(`getAlbumTracks albumId=${albumId} → albumName="${albumData.Name}" tracks=${tracksData.Items?.length ?? 0}`);
+
     return (tracksData.Items ?? [])
       .filter(item => item.MediaSources?.[0]?.Path)
-      .map(item => this.trackItemToInfo(item, albumData.ProductionYear));
+      .map(item => this.trackItemToInfo(item, albumData.ProductionYear, albumData.Name));
   }
 
   async getPlaylistTracks(playlistId: string): Promise<TrackInfo[]> {
     const data = await this.request<{ Items: JellyfinTrackItem[] }>(
-      `/Playlists/${playlistId}/Items?UserId=${this.userId}&Fields=Path,MediaSources,AlbumId,ParentId`
+      `/Playlists/${playlistId}/Items?UserId=${this.userId}&Fields=Path,MediaSources,AlbumId,ParentId,Genres,Artists,AlbumArtist,Album`
     );
 
     return (data.Items ?? [])
@@ -267,7 +276,9 @@ class SyncApiImpl implements SyncApi {
       const itemId = itemIds[i];
       const itemType = itemTypes.get(itemId) ?? 'unknown';
       if (result.status === 'fulfilled') {
-        tracks.push(...result.value);
+        // Tag every track with its parent item ID so callers can group by parent
+        const taggedTracks = result.value.map(t => ({ ...t, parentItemId: itemId }));
+        tracks.push(...taggedTracks);
       } else {
         const err = result.reason;
         errors.push(err instanceof ApiError
@@ -384,20 +395,53 @@ class SyncApiImpl implements SyncApi {
     }
   }
 
+  async getCoverArt(itemId: string): Promise<Buffer> {
+    const url = `${this.baseUrl}/Items/${itemId}/Images/Primary`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const response = await this.fetchFn(url, {
+        method: 'GET',
+        headers: { 'X-MediaBrowser-Token': this.apiKey, 'X-Emby-Token': this.apiKey },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new ApiError(`Failed to fetch cover art: ${response.status} ${response.statusText}`, response.status);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof ApiError) throw error;
+      if (error instanceof Error && error.name === 'AbortError') throw new ApiError('Cover art request timed out', 408);
+      throw new ApiError(`Failed to fetch cover art: ${error instanceof Error ? error.message : String(error)}`, 0);
+    }
+  }
+
   /**
    * Maps a Jellyfin track item to TrackInfo.
    * Year is injected separately (resolved at album level to avoid N+1 requests).
    */
-  private trackItemToInfo(item: JellyfinTrackItem, albumYear?: number): TrackInfo {
+  private trackItemToInfo(item: JellyfinTrackItem, albumYear?: number, albumName?: string): TrackInfo {
     const source = item.MediaSources?.[0];
+    const resolvedAlbum = item.Album || item.AlbumName || albumName;
+
+    this.logger?.debug(`trackItemToInfo track="${item.Name}" → item.Album="${item.Album ?? '(empty)'}" item.AlbumName="${item.AlbumName ?? '(empty)'}" albumName="${albumName ?? '(empty)'}" resolved="${resolvedAlbum}"`);
 
     return {
       id: item.Id,
       name: item.Name,
-      album: item.AlbumName,
+      album: resolvedAlbum,
       artists: item.Artists,
       albumArtist: item.AlbumArtist,
       year: albumYear,
+      genres: item.Genres ?? [],
+      albumId: item.AlbumId,
       path: source?.Path ?? '',
       format: source?.Container ?? 'unknown',
       size: source?.Size,
@@ -439,12 +483,15 @@ export function detectServerRootPath(tracks: TrackInfo[]): string {
     return prefix.endsWith('/') ? prefix : prefix + '/';
   });
 
-  if (candidates.some(c => !c)) {
+  // Filter out shallow paths (< 5 components) — they can't infer a root.
+  // This prevents a single shallow track from poisoning detection for the whole batch.
+  const validCandidates = candidates.filter(c => c !== '');
+  if (validCandidates.length === 0) {
     return '';
   }
 
   // All candidates should agree for a single Jellyfin library; find common prefix.
-  const commonRoot = candidates.reduce((acc, c) => {
+  const commonRoot = validCandidates.reduce((acc, c) => {
     let i = 0;
     while (i < acc.length && i < c.length && acc[i] === c[i]) i++;
     return acc.substring(0, i);
@@ -484,7 +531,8 @@ export function createMockApiClient(overrides?: Partial<SyncApi>): SyncApi {
       const { Readable } = require('stream');
       return Readable.from(Buffer.from(''));
     },
+    getCoverArt: async () => Buffer.from(''),
   };
-  
+
   return { ...defaultMock, ...overrides };
 }

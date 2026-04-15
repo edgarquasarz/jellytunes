@@ -5,7 +5,7 @@
  * Pure functions with dependency injection for testing.
  */
 
-import type { TrackInfo, DestinationValidation } from './types';
+import type { TrackInfo, DestinationValidation, TrackMetadata } from './types';
 import { resolveFFmpegPath } from './ffmpeg-path';
 
 /**
@@ -44,6 +44,12 @@ export interface FileSystem {
 
   /** Get available disk space */
   getFreeSpace(path: string): Promise<number>;
+
+  /** Create a readable stream from a file (Node.js Readable) */
+  createReadStream(path: string): Promise<NodeJS.ReadableStream>;
+
+  /** Create a writable stream to a file (Node.js Writable) */
+  createWriteStream(path: string): Promise<NodeJS.WritableStream>;
 }
 
 /**
@@ -143,6 +149,16 @@ export function createNodeFileSystem(): FileSystem {
 
       return Number.MAX_SAFE_INTEGER;
     },
+
+    createReadStream: async (path: string) => {
+      const { createReadStream: nodeCreateReadStream } = require('fs');
+      return nodeCreateReadStream(path);
+    },
+
+    createWriteStream: async (path: string) => {
+      const { createWriteStream: nodeCreateWriteStream } = require('fs');
+      return nodeCreateWriteStream(path);
+    },
   };
 }
 
@@ -205,6 +221,28 @@ export function createMockFileSystem(overrides?: Partial<FileSystem>): FileSyste
     },
 
     getFreeSpace: async () => Number.MAX_SAFE_INTEGER,
+
+    createReadStream: async (path: string) => {
+      const data = files.get(path);
+      if (!data) throw new Error(`File not found: ${path}`);
+      const { Readable } = require('stream');
+      return Readable.from(data);
+    },
+
+    createWriteStream: async (path: string) => {
+      const chunks: Buffer[] = [];
+      const { Writable } = require('stream');
+      const writeStream = new Writable({
+        write(chunk: Buffer, _encoding: string, callback: () => void) {
+          chunks.push(chunk);
+          callback();
+        }
+      });
+      writeStream.on('finish', () => {
+        files.set(path, Buffer.concat(chunks));
+      });
+      return writeStream;
+    },
   };
   
   // Add helper methods for mock
@@ -241,6 +279,28 @@ export interface AudioConverter {
     output: string,
     bitrate: '128k' | '192k' | '320k'
   ): Promise<{ success: boolean; error?: string }>;
+
+  /** Convert audio stream with metadata and optional cover art embeds */
+  convertStreamToMp3WithMeta(
+    input: NodeJS.ReadableStream,
+    output: string,
+    bitrate: '128k' | '192k' | '320k',
+    metadata: TrackMetadata,
+    embedCover?: Buffer
+  ): Promise<{ success: boolean; error?: string }>;
+
+  /** Tag an existing audio file (passthrough, no re-encoding) with metadata and optional cover art */
+  tagFile(
+    inputPath: string,
+    outputPath: string,
+    metadata: TrackMetadata,
+    embedCover?: Buffer
+  ): Promise<{ success: boolean; error?: string }>;
+
+  /** Read all metadata tags from an audio file using ffprobe */
+  readFileMetadata(
+    filePath: string
+  ): Promise<Record<string, string>>;
 
   /** Check if FFmpeg is available */
   isAvailable(): Promise<boolean>;
@@ -296,13 +356,19 @@ export function createFFmpegConverter(): AudioConverter {
           output,
         ];
 
-        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'ignore'] });
+        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+        let stderr = '';
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
         proc.on('error', (err: Error) => {
           resolve({ success: false, error: `FFmpeg error: ${err.message}` });
         });
 
         proc.on('close', (code: number) => {
+          if (code !== 0) {
+            console.error(`[sync-files] convertStreamToMp3 FFmpeg failed for ${output}: code=${code}`, `\nargs: ${args.join(' ')}`, `\nstderr: ${stderr}`);
+          }
           resolve({
             success: code === 0,
             error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
@@ -321,6 +387,157 @@ export function createFFmpegConverter(): AudioConverter {
       });
     },
 
+    convertStreamToMp3WithMeta: async (inputStream, output, bitrate, metadata, embedCover) => {
+      const { spawn } = require('child_process');
+      const fs = require('fs');
+      const os = require('os');
+
+      return new Promise((resolve) => {
+        // Build complete args array BEFORE spawning — all inputs and flags before output
+        const args: string[] = ['-i', 'pipe:0'];
+
+        // Audio encoding params — omit -vn when embedding cover art so the video stream is included
+        if (!embedCover) args.push('-vn');
+        args.push('-ab', bitrate, '-ar', '44100', '-ac', '2', '-y');
+
+        // Metadata flags — must appear BEFORE the output path
+        if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+        if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+        if (metadata.albumArtist) args.push('-metadata', `album_artist=${metadata.albumArtist}`);
+        if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+        if (metadata.year) args.push('-metadata', `date=${metadata.year}`);
+        if (metadata.trackNumber) args.push('-metadata', `track=${metadata.trackNumber}`);
+        if (metadata.discNumber) args.push('-metadata', `disc=${metadata.discNumber}`);
+        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.join(';')}`);
+        if (metadata.composer) args.push('-metadata', `composer=${metadata.composer}`);
+        if (metadata.isrc) args.push('-metadata', `isrc=${metadata.isrc}`);
+        if (metadata.copyright) args.push('-metadata', `copyright=${metadata.copyright}`);
+        if (metadata.comment) args.push('-metadata', `comment=${metadata.comment}`);
+
+        // Handle cover art via temp file — must prepend to args before output
+        let coverTempPath: string | undefined;
+        if (embedCover) {
+          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
+          fs.writeFileSync(coverTempPath, embedCover);
+          args.unshift('-i', coverTempPath, '-map', '1:a', '-map', '0:v', '-disposition:v', 'attached_pic');
+        }
+
+        args.push(output);
+
+        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        let stderr = '';
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        proc.on('error', (err: Error) => {
+          if (coverTempPath) try { fs.unlinkSync(coverTempPath); } catch { /* ignore */ }
+          resolve({ success: false, error: `FFmpeg error: ${err.message}` });
+        });
+
+        proc.on('close', (code: number) => {
+          if (coverTempPath) try { fs.unlinkSync(coverTempPath); } catch { /* ignore */ }
+          if (code !== 0) {
+            console.error(`[sync-files] FFmpeg failed for ${output}: code=${code}`, `\nargs: ${args.join(' ')}`, `\nstderr: ${stderr}`);
+          }
+          resolve({
+            success: code === 0,
+            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+          });
+        });
+
+        // Suppress EPIPE
+        proc.stdin.on('error', () => {});
+
+        inputStream.on('error', (err: Error) => {
+          try { proc.kill(); } catch { /* already dead */ }
+          if (coverTempPath) try { fs.unlinkSync(coverTempPath); } catch { /* ignore */ }
+          resolve({ success: false, error: `Stream error: ${err.message}` });
+        });
+
+        inputStream.pipe(proc.stdin);
+      });
+    },
+
+    tagFile: async (inputPath, outputPath, metadata, embedCover) => {
+      const { spawn } = require('child_process');
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+
+      return new Promise((resolve) => {
+        // FFmpeg cannot edit files in-place. When input === output, write to a
+        // temp file first, then atomically replace the original.
+        const useTempOutput = inputPath === outputPath;
+        const finalOutputPath = outputPath;
+        // Use the same extension as the original file so FFmpeg recognizes the format
+        const ext = path.extname(inputPath);
+        const tempOutputPath = useTempOutput ? `${os.tmpdir()}/jt-tag-${Date.now()}${ext}` : outputPath;
+
+        // Build complete args array BEFORE spawning — all inputs and flags before output
+        const args: string[] = ['-i', inputPath];
+
+        // Handle cover art via temp file — insert immediately after first -i
+        let coverTempPath: string | undefined;
+        if (embedCover) {
+          coverTempPath = `${os.tmpdir()}/jt-cover-${Date.now()}.jpg`;
+          fs.writeFileSync(coverTempPath, embedCover);
+          args.push('-i', coverTempPath, '-map', '0:a', '-map', '1:v', '-disposition:v', 'attached_pic');
+        }
+
+        args.push('-c', 'copy', '-y');
+
+        // Metadata flags — must appear AFTER all inputs but before output path
+        if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+        if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+        if (metadata.albumArtist) args.push('-metadata', `album_artist=${metadata.albumArtist}`);
+        if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+        if (metadata.year) args.push('-metadata', `date=${metadata.year}`);
+        if (metadata.trackNumber) args.push('-metadata', `track=${metadata.trackNumber}`);
+        if (metadata.discNumber) args.push('-metadata', `disc=${metadata.discNumber}`);
+        if (metadata.genres?.length) args.push('-metadata', `genre=${metadata.genres.join(';')}`);
+        if (metadata.composer) args.push('-metadata', `composer=${metadata.composer}`);
+        if (metadata.isrc) args.push('-metadata', `isrc=${metadata.isrc}`);
+        if (metadata.copyright) args.push('-metadata', `copyright=${metadata.copyright}`);
+        if (metadata.comment) args.push('-metadata', `comment=${metadata.comment}`);
+
+        args.push(tempOutputPath);
+
+        const proc = spawn(ffmpegPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+
+        let stderr = '';
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        proc.on('error', (err: Error) => {
+          if (coverTempPath) try { fs.unlinkSync(coverTempPath); } catch { /* ignore */ }
+          resolve({ success: false, error: `FFmpeg error: ${err.message}` });
+        });
+
+        proc.on('close', (code: number) => {
+          if (coverTempPath) try { fs.unlinkSync(coverTempPath); } catch { /* ignore */ }
+          if (code === 0 && useTempOutput) {
+            // Move temp file to final destination
+            try {
+              fs.unlinkSync(finalOutputPath);
+              fs.renameSync(tempOutputPath, finalOutputPath);
+            } catch (renameErr) {
+              console.error(`[sync-files] tagFile failed to replace ${finalOutputPath}:`, renameErr);
+              try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
+              resolve({ success: false, error: `Failed to replace file: ${renameErr}` });
+              return;
+            }
+          }
+          if (code !== 0) {
+            if (useTempOutput) try { fs.unlinkSync(tempOutputPath); } catch { /* ignore */ }
+            console.error(`[sync-files] tagFile FFmpeg failed for ${outputPath}: code=${code}`, `\nargs: ${args.join(' ')}`, `\nstderr: ${stderr}`);
+          }
+          resolve({
+            success: code === 0,
+            error: code !== 0 ? `FFmpeg exited with code ${code}` : undefined,
+          });
+        });
+      });
+    },
+
     isAvailable: async () => {
       const { execSync } = require('child_process');
       try {
@@ -329,6 +546,40 @@ export function createFFmpegConverter(): AudioConverter {
       } catch {
         return false;
       }
+    },
+
+    readFileMetadata: async (filePath: string) => {
+      const { spawn } = require('child_process');
+
+      return new Promise((resolve) => {
+        const args = [
+          '-v', 'quiet',
+          '-print_format', 'json',
+          '-show_format',
+          filePath,
+        ];
+
+        const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+
+        let stdout = '';
+        proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+
+        proc.on('error', () => { resolve({}); });
+        proc.on('close', () => {
+          try {
+            const parsed = JSON.parse(stdout);
+            const tags = parsed.format?.tags ?? {};
+            // Normalize key names to lowercase for consistent lookup
+            const normalized: Record<string, string> = {};
+            for (const [k, v] of Object.entries(tags)) {
+              normalized[k.toLowerCase()] = String(v);
+            }
+            resolve(normalized);
+          } catch {
+            resolve({});
+          }
+        });
+      });
     },
   };
 }
@@ -340,6 +591,9 @@ export function createMockConverter(): AudioConverter {
   return {
     convertToMp3: async () => ({ success: true }),
     convertStreamToMp3: async () => ({ success: true }),
+    convertStreamToMp3WithMeta: async () => ({ success: true }),
+    tagFile: async () => ({ success: true }),
+    readFileMetadata: async () => ({}),
     isAvailable: async () => true,
   };
 }
@@ -458,6 +712,47 @@ export async function copyFileWithProgress(
  */
 export function calculateTotalSize(tracks: TrackInfo[]): number {
   return tracks.reduce((sum, track) => sum + (track.size ?? 0), 0);
+}
+
+/**
+ * Merge original file metadata with Jellyfin metadata.
+ * Jellyfin fields take priority; file fields fill holes where Jellyfin has no value.
+ * Also normalizes common tag name variations (e.g. album_artist vs albumartist).
+ */
+export function mergeMetadata(
+  fileMeta: Record<string, string>,
+  jellyfinMeta: TrackMetadata
+): TrackMetadata {
+  // Normalize file tag keys: ffprobe returns lowercase keys but field names vary
+  // Map common aliases to standard field names
+  const albumArtistAliases = ['album_artist', 'albumartist', 'album artist', 'albumartist'];
+  const composerAliases = ['composer', 'composed by', 'writer', 'lyricist'];
+  const isrcAliases = ['isrc', 'isrc-code'];
+  const copyrightAliases = ['copyright', 'licence', 'license'];
+  const commentAliases = ['comment', 'comments', 'description'];
+
+  const getFileVal = (aliases: string[]): string | undefined => {
+    for (const a of aliases) {
+      const v = fileMeta[a.toLowerCase()];
+      if (v) return v;
+    }
+    return undefined;
+  };
+
+  return {
+    title: jellyfinMeta.title ?? fileMeta.title,
+    artist: jellyfinMeta.artist ?? fileMeta.artist,
+    albumArtist: jellyfinMeta.albumArtist ?? getFileVal(albumArtistAliases),
+    album: jellyfinMeta.album ?? fileMeta.album,
+    year: jellyfinMeta.year ?? fileMeta.date ?? fileMeta.year,
+    trackNumber: jellyfinMeta.trackNumber ?? fileMeta.track,
+    discNumber: jellyfinMeta.discNumber ?? fileMeta.disc,
+    genres: jellyfinMeta.genres?.length ? jellyfinMeta.genres : fileMeta.genre ? [fileMeta.genre] : undefined,
+    composer: jellyfinMeta.composer ?? getFileVal(composerAliases),
+    isrc: jellyfinMeta.isrc ?? getFileVal(isrcAliases),
+    copyright: jellyfinMeta.copyright ?? getFileVal(copyrightAliases),
+    comment: jellyfinMeta.comment ?? getFileVal(commentAliases),
+  };
 }
 
 /**

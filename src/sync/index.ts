@@ -43,6 +43,11 @@ export type {
   SizeEstimate,
   DestinationValidation,
   ProgressCallback,
+  CoverArtMode,
+  TrackChangeType,
+  TrackChange,
+  ItemDiff,
+  SyncDiffResult,
 } from './types';
 
 // Core

@@ -18,6 +18,8 @@ export const DEFAULT_SYNC_OPTIONS: Required<SyncOptions> = {
   skipExisting: true,
   preserveStructure: true,
   filesystemType: 'unknown',
+  embedMetadata: true,
+  coverArtMode: 'embed',
 };
 
 /** Windows/FAT32 reserved filenames that cannot exist on those filesystems */
