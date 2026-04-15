@@ -11,12 +11,14 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
   const [updateInfo, setUpdateInfo] = useState<{ latestVersion: string; releaseUrl: string } | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [upToDate, setUpToDate] = useState(false)
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(true)
 
   useEffect(() => {
     window.api.getVersion().then(setVersion).catch(() => {})
     window.api.checkForUpdates().then(result => {
       if (result.updateAvailable) setUpdateInfo({ latestVersion: result.latestVersion, releaseUrl: result.releaseUrl })
     }).catch(() => {})
+    window.api.getPreferences().then(p => setAnalyticsEnabled(p.analyticsEnabled)).catch(() => {})
   }, [])
 
   const handleReportBug = async (): Promise<void> => {
@@ -44,6 +46,12 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     }
   }
 
+  const handleAnalyticsToggle = async (): Promise<void> => {
+    const next = !analyticsEnabled
+    setAnalyticsEnabled(next)
+    await window.api.setPreferences({ analyticsEnabled: next })
+  }
+
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
@@ -51,82 +59,110 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
     >
       <div
         data-testid="about-modal"
-        className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl"
+        className="bg-surface_container_low border border-outline_variant rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex flex-col items-center gap-2 mb-4">
           <GradientMusicIcon className="w-10 h-10" />
           <div className="text-center">
-            <h2 className="text-lg font-semibold">JellyTunes</h2>
-            {version && <p className="text-xs text-zinc-500">v{version}</p>}
+            <h2 className="text-headline-md">JellyTunes</h2>
+            {version && <p className="text-caption text-on_surface_variant">v{version}</p>}
           </div>
         </div>
 
-        <p className="text-sm text-zinc-400 mb-4 text-center">
+        <p className="text-body-md text-on_surface_variant mb-4 text-center">
           Sync music from your Jellyfin server to portable devices.
         </p>
 
-        {updateInfo ? (
-          <a
-            href="#"
-            onClick={e => { e.preventDefault(); window.open(updateInfo.releaseUrl) }}
-            className="flex items-center justify-center gap-2 w-full px-4 py-2 mb-4 text-sm rounded-lg bg-jf-purple/20 border border-jf-purple/40 text-jf-purple-light hover:bg-jf-purple/30 transition-colors"
-          >
-            v{updateInfo.latestVersion} available — download ↗
-          </a>
-        ) : upToDate ? (
-          <div className="flex items-center justify-center gap-2 w-full px-4 py-2 mb-4 text-sm rounded-lg bg-zinc-800 text-zinc-400">
-            You're up to date ✓
-          </div>
-        ) : (
-          <button
-            onClick={handleCheckUpdate}
-            disabled={checkingUpdate}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-4 text-sm rounded-lg bg-jf-purple/10 text-jf-purple-light hover:bg-jf-purple/20 disabled:opacity-50 transition-colors"
-          >
-            {checkingUpdate ? 'Checking…' : 'Check for updates'}
-          </button>
-        )}
-
-        <div className="space-y-2">
+        {/* ── Row 1: Primary actions ── */}
+        <div className="flex flex-row gap-4 mb-4 items-stretch">
           <button
             data-testid="report-bug-button"
             onClick={handleReportBug}
             disabled={reporting}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm bg-jf-purple hover:bg-jf-purple-dark disabled:opacity-50 rounded-lg transition-colors font-medium"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md bg-gradient-primary hover:bg-secondary_container disabled:opacity-50 rounded-lg transition-colors font-medium"
           >
-            {reporting ? 'Opening…' : 'Report a Bug'}
+            {reporting ? '…' : 'Report a Bug'}
           </button>
 
           <a
             href="#"
             onClick={e => { e.preventDefault(); window.open('mailto:hello@oriaflow.dev') }}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm bg-jf-purple hover:bg-jf-purple-dark rounded-lg transition-colors font-medium"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium"
           >
-            Contact us
+            Contact Us
           </a>
 
+          {updateInfo ? (
+            <a
+              href="#"
+              onClick={e => { e.preventDefault(); window.open(updateInfo.releaseUrl) }}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 transition-colors font-medium"
+            >
+              v{updateInfo.latestVersion}
+            </a>
+          ) : upToDate ? (
+            <div className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-surface_container_highest text-on_surface_variant">
+              ✓ Up to date
+            </div>
+          ) : (
+            <button
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md rounded-lg bg-primary_container/10 border border-primary_container/40 text-primary hover:bg-primary_container/20 disabled:opacity-50 transition-colors font-medium"
+            >
+              {checkingUpdate ? '…' : 'Check Updates'}
+            </button>
+          )}
+        </div>
+
+        {/* ── Row 2: Tertiary links ── */}
+        <div className="flex flex-row gap-4 mb-4 items-stretch">
           <a
             href="#"
             onClick={e => { e.preventDefault(); window.open('https://github.com/oriaflow-labs/jellytunes') }}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
           >
-            View on GitHub
+            View on GitHub ↗
           </a>
 
           <a
             href="#"
             onClick={e => { e.preventDefault(); window.open('https://ko-fi.com/oriaflowlabs') }}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-4 h-12 text-body-md text-on_surface_variant border border-transparent hover:border-outline_variant/40 hover:text-on_surface hover:bg-surface_container_high rounded-lg transition-colors"
           >
             Support on Ko-fi ☕
           </a>
         </div>
 
+        {/* ── Analytics toggle ── */}
+        <div className="flex items-center justify-between px-1 py-2 text-body-sm text-on_surface_variant">
+          <span>Anonymous usage statistics</span>
+          <button
+            onClick={handleAnalyticsToggle}
+            aria-label="Anonymous usage statistics"
+            className={`relative w-10 h-5 rounded-full transition-colors ${
+              analyticsEnabled ? 'bg-primary' : 'bg-outline_variant'
+            }`}
+            aria-checked={analyticsEnabled}
+            role="switch"
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              analyticsEnabled ? 'translate-x-[24px]' : 'translate-x-0'
+            }`} />
+          </button>
+        </div>
+        <p className="text-caption text-on_surface_variant/60 text-center mb-4">
+          No personal data collected.{' '}
+          <a href="#" onClick={e => { e.preventDefault(); window.open('https://github.com/oriaflow-labs/jellytunes/blob/main/PRIVACY.md') }}
+             className="underline">Privacy Policy</a>
+        </p>
+
+        {/* ── Close ── */}
         <button
           data-testid="about-close-button"
           onClick={onClose}
-          className="mt-4 w-full px-4 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="w-full px-4 py-2 text-body-md text-on_surface_variant hover:text-on_surface transition-colors border border-outline_variant/40 rounded-lg hover:border-outline_variant/60 mt-4"
         >
           Close
         </button>
