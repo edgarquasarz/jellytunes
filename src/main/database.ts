@@ -36,6 +36,25 @@ export interface SyncedItemInfo {
 }
 
 // ---------------------------------------------------------------------------
+// SyncedTrackRecord — track-level sync tracking (Phase 1)
+// ---------------------------------------------------------------------------
+
+export interface SyncedTrackRecord {
+  id: number
+  deviceId: number
+  itemId: string
+  trackId: string
+  destinationPath: string
+  fileSize: number | null
+  metadataHash: string | null
+  coverArtMode: string
+  encodedBitrate: string | null
+  serverPath: string | null
+  serverRootPath: string | null
+  syncedAt: string
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
@@ -78,14 +97,44 @@ export function initDatabase(): void {
       UNIQUE(device_id, item_id),
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
+
+    CREATE TABLE IF NOT EXISTS synced_tracks (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id       INTEGER NOT NULL,
+      item_id         TEXT NOT NULL,
+      track_id        TEXT NOT NULL,
+      destination_path TEXT NOT NULL,
+      file_size       INTEGER,
+      metadata_hash   TEXT,
+      cover_art_mode  TEXT NOT NULL DEFAULT 'embed',
+      encoded_bitrate TEXT,
+      server_path     TEXT,
+      server_root_path TEXT,
+      synced_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(device_id, track_id),
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_synced_tracks_device_item ON synced_tracks(device_id, item_id);
   `)
 
   // Index for device-based queries on sync_history (avoids full table scan as history grows)
   db.exec('CREATE INDEX IF NOT EXISTS idx_sync_history_device ON sync_history(device_id)')
 
   // Migrations: add columns if they don't exist (SQLite has no IF NOT EXISTS for ALTER TABLE)
-  try { db.exec('ALTER TABLE synced_files ADD COLUMN item_name TEXT') } catch { /* already exists */ }
-  try { db.exec('ALTER TABLE synced_files ADD COLUMN item_type TEXT') } catch { /* already exists */ }
+  if (!columnExists(db, 'synced_files', 'item_name')) {
+    db.exec('ALTER TABLE synced_files ADD COLUMN item_name TEXT')
+  }
+  if (!columnExists(db, 'synced_files', 'item_type')) {
+    db.exec('ALTER TABLE synced_files ADD COLUMN item_type TEXT')
+  }
+
+  // Migration: add server_root_path column if it doesn't exist (for stable path comparison)
+  if (!columnExists(db, 'synced_tracks', 'server_root_path')) {
+    db.exec('ALTER TABLE synced_tracks ADD COLUMN server_root_path TEXT')
+  }
+
+  // Migration: set cover_art_mode = 'embed' for existing records (Phase 1 bug fix)
+  try { db.exec("UPDATE synced_tracks SET cover_art_mode = 'embed' WHERE cover_art_mode = 'off'") } catch { /* ignore */ }
 
   log.info('Database ready')
 }
@@ -93,6 +142,16 @@ export function initDatabase(): void {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Checks whether a column exists in a given SQLite table using PRAGMA table_info.
+ * Safer than try/catch around ALTER TABLE because it distinguishes "column missing"
+ * from actual error conditions (disk full, corrupt schema, FK violations, etc.).
+ */
+export function columnExists(db: Database.Database, table: string, column: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info('${table}')`).all() as { name: string }[];
+  return cols.some(c => c.name === column);
+}
 
 function requireDb(): Database.Database {
   if (!db) throw new Error('Database not initialized — call initDatabase() first')
@@ -246,11 +305,141 @@ export function removeSyncedItems(mountPoint: string, itemIds: string[]): void {
     .get(mountPoint) as { id: number } | undefined
   if (!device) return
 
-  const stmt = database.prepare('DELETE FROM synced_files WHERE device_id = ? AND item_id = ?')
+  const stmtFiles = database.prepare('DELETE FROM synced_files WHERE device_id = ? AND item_id = ?')
+  const stmtTracks = database.prepare('DELETE FROM synced_tracks WHERE device_id = ? AND item_id = ?')
   const deleteMany = database.transaction((ids: string[]) => {
-    for (const id of ids) stmt.run(device.id, id)
+    for (const id of ids) {
+      stmtFiles.run(device.id, id)
+      stmtTracks.run(device.id, id)
+    }
   })
   deleteMany(itemIds)
+}
+
+export function clearDestinationRecords(mountPoint: string): void {
+  const database = requireDb()
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined
+  if (!device) return
+  database.transaction(() => {
+    database.prepare('DELETE FROM synced_files WHERE device_id = ?').run(device.id)
+    database.prepare('DELETE FROM synced_tracks WHERE device_id = ?').run(device.id)
+    database.prepare('DELETE FROM sync_history WHERE device_id = ?').run(device.id)
+    database.prepare('DELETE FROM devices WHERE id = ?').run(device.id)
+  })()
+}
+
+// ---------------------------------------------------------------------------
+// SyncedTracks — track-level sync tracking (Phase 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upsert a synced track record.
+ * Updates existing record if (device_id, track_id) conflict.
+ */
+export function upsertSyncedTrack(
+  mountPoint: string,
+  itemId: string,
+  trackId: string,
+  destPath: string,
+  fileSize: number | null,
+  metadataHash: string | null,
+  coverArtMode: string,
+  encodedBitrate: string | null,
+  serverPath: string | null,
+  serverRootPath: string | null
+): void {
+  const database = requireDb()
+  // Auto-register device if not yet in DB — must exist before we can insert tracks
+  const deviceId = upsertDevice(mountPoint)
+
+  database
+    .prepare(`
+      INSERT INTO synced_tracks (device_id, item_id, track_id, destination_path, file_size, metadata_hash, cover_art_mode, encoded_bitrate, server_path, server_root_path, synced_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(device_id, track_id) DO UPDATE SET
+        destination_path = excluded.destination_path,
+        file_size = excluded.file_size,
+        metadata_hash = excluded.metadata_hash,
+        cover_art_mode = excluded.cover_art_mode,
+        encoded_bitrate = excluded.encoded_bitrate,
+        server_path = excluded.server_path,
+        server_root_path = excluded.server_root_path,
+        synced_at = datetime('now')
+    `)
+    .run(deviceId, itemId, trackId, destPath, fileSize, metadataHash, coverArtMode, encodedBitrate, serverPath, serverRootPath)
+}
+
+/**
+ * Get all synced track records for a device.
+ */
+export function getSyncedTracksForDevice(mountPoint: string): SyncedTrackRecord[] {
+  const database = requireDb()
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined
+  if (!device) return []
+
+  const rows = database
+    .prepare(`
+      SELECT id, device_id AS deviceId, item_id AS itemId, track_id AS trackId,
+             destination_path AS destinationPath, file_size AS fileSize,
+             metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
+             encoded_bitrate AS encodedBitrate, server_path AS serverPath,
+             server_root_path AS serverRootPath, synced_at AS syncedAt
+      FROM synced_tracks
+      WHERE device_id = ?
+    `)
+    .all(device.id) as SyncedTrackRecord[]
+  return rows
+}
+
+/**
+ * Get synced track records for a specific item on a device.
+ */
+export function getSyncedTracksForItem(mountPoint: string, itemId: string): SyncedTrackRecord[] {
+  const database = requireDb()
+  const device = database
+    .prepare('SELECT id FROM devices WHERE mount_point = ?')
+    .get(mountPoint) as { id: number } | undefined
+  if (!device) return []
+
+  return database
+    .prepare(`
+      SELECT id, device_id AS deviceId, item_id AS itemId, track_id AS trackId,
+             destination_path AS destinationPath, file_size AS fileSize,
+             metadata_hash AS metadataHash, cover_art_mode AS coverArtMode,
+             encoded_bitrate AS encodedBitrate, server_path AS serverPath,
+             server_root_path AS serverRootPath, synced_at AS syncedAt
+      FROM synced_tracks
+      WHERE device_id = ? AND item_id = ?
+    `)
+    .all(device.id, itemId) as SyncedTrackRecord[]
+}
+
+/**
+ * Remove all synced track records for an item on a device.
+ */
+export function removeSyncedTracksForItem(mountPoint: string, itemId: string): void {
+  const database = requireDb()
+  const deviceId = upsertDevice(mountPoint)
+
+  database
+    .prepare('DELETE FROM synced_tracks WHERE device_id = ? AND item_id = ?')
+    .run(deviceId, itemId)
+}
+
+/**
+ * Remove a single synced track record.
+ */
+export function removeSyncedTrack(mountPoint: string, trackId: string): void {
+  const database = requireDb()
+  const deviceId = upsertDevice(mountPoint)
+
+  database
+    .prepare('DELETE FROM synced_tracks WHERE device_id = ? AND track_id = ?')
+    .run(deviceId, trackId)
 }
 
 export function closeDatabase(): void {
