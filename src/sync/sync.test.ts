@@ -26,12 +26,12 @@ import {
   progress,
 } from './sync-progress';
 
-import { getSyncedTracksForDevice, getSyncedTracksForItem, getSyncedItems, upsertSyncedTrack } from '../main/database';
+import { getSyncedTracksForDevice, getSyncedTracksForItem, upsertSyncedTrack } from '../main/database';
 
 // Stable mock for getSyncedTracksForItem — hoisted so the vi.mock factory below can reference it
 const mockGetSyncedTracksForItem = vi.hoisted(() => vi.fn(() => []));
 // Stable mock for getSyncedItems — hoisted for same reason
-const mockGetSyncedItems = vi.hoisted(() => vi.fn(() => []));
+const mockGetSyncedItems = vi.hoisted(() => vi.fn<() => Array<{ id: string; name: string; type: string }>>(() => []));
 
 // Mock database module so getSyncedTracksForDevice doesn't throw "Database not initialized"
 vi.mock('../main/database', () => ({
@@ -1909,10 +1909,10 @@ describe('detectServerRootPath', () => {
 
     const tracks = [
       // Deep paths — valid candidates
-      { id: '1', name: 'Track 1', path: '/mediamusic/lib/lib/Artist1/Album/track1.mp3' },
-      { id: '2', name: 'Track 2', path: '/mediamusic/lib/lib/Artist2/Album/track2.mp3' },
+      { id: '1', name: 'Track 1', path: '/mediamusic/lib/lib/Artist1/Album/track1.mp3', format: 'mp3' },
+      { id: '2', name: 'Track 2', path: '/mediamusic/lib/lib/Artist2/Album/track2.mp3', format: 'mp3' },
       // Shallow path — would return '' from map, must be filtered out
-      { id: '3', name: 'Track 3', path: '/music/track.mp3' },
+      { id: '3', name: 'Track 3', path: '/music/track.mp3', format: 'mp3' },
     ];
 
     const result = detectServerRootPath(tracks);
@@ -1926,8 +1926,8 @@ describe('detectServerRootPath', () => {
     const { detectServerRootPath } = await import('./sync-api');
 
     const tracks = [
-      { id: '1', name: 'Track 1', path: '/track.mp3' },
-      { id: '2', name: 'Track 2', path: '/music/track.mp3' },
+      { id: '1', name: 'Track 1', path: '/track.mp3', format: 'mp3' },
+      { id: '2', name: 'Track 2', path: '/music/track.mp3', format: 'mp3' },
     ];
 
     const result = detectServerRootPath(tracks);

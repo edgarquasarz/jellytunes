@@ -93,6 +93,12 @@ export interface SyncProgressInfo {
   current: number
   total: number
   file: string
+  phase?: string
+  currentTrack?: string
+  bytesProcessed?: number
+  totalBytes?: number
+  isCancelling?: boolean
+  warning?: string
 }
 
 export interface PreviewData {

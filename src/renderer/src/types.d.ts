@@ -43,6 +43,10 @@ interface SyncProgress {
   total: number
   currentFile: string
   status: 'syncing' | 'completed' | 'cancelled'
+  phase?: string
+  bytesProcessed?: number
+  totalBytes?: number
+  warning?: string
 }
 
 interface Api {
@@ -66,7 +70,7 @@ interface Api {
       convertToMp3?: boolean;
       bitrate?: '128k' | '192k' | '320k';
     };
-  }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
+  }) => Promise<{ success: boolean; tracksCopied: number; tracksSkipped: number; tracksRetagged?: number; tracksFailed: string[]; errors: string[]; totalSizeBytes?: number }>
   cancelSync: () => Promise<{ cancelled: boolean }>
   onSyncProgress: (callback: (progress: SyncProgress) => void) => (() => void) | undefined
   isFfmpegAvailable: () => Promise<boolean>
@@ -76,7 +80,8 @@ interface Api {
   estimateSize: (options: {
     serverUrl: string; apiKey: string; userId: string
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
-  }) => Promise<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number> }>
+    convertToMp3?: boolean; bitrate?: string; syncedIds?: string[]
+  }) => Promise<{ trackCount: number; totalBytes: number; formatBreakdown: Record<string, number>; syncedMusicBytes: number; newMusicBytes: number }>
   getDeviceSyncInfo: (mountPoint: string) => Promise<{
     lastSync: string | null; totalTracks: number; totalBytes: number; syncCount: number
   } | null>
@@ -85,11 +90,21 @@ interface Api {
     tracksSynced: number; bytesTransferred: number; status: string
   }>>
   getSyncedItems: (mountPoint: string) => Promise<Array<{ id: string; name: string; type: 'artist' | 'album' | 'playlist' }>>
+  analyzeDiff: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
+    destinationPath: string
+    options: { convertToMp3: boolean; bitrate: '128k' | '192k' | '320k'; coverArtMode: 'off' | 'embed' | 'separate' }
+  }) => Promise<{ success: boolean; items: Array<{ itemId: string; itemName: string; itemType: string; changes: Array<{ trackId: string; trackName: string; changeType: string }>; summary: { new: number; metadataChanged: number; removed: number; pathChanged: number; unchanged: number } }>; totals: { newTracks: number; metadataChanged: number; removed: number; pathChanged: number; unchanged: number }; errors?: string[] }>
   removeItems: (options: {
     serverUrl: string; apiKey: string; userId: string
     itemIds: string[]; itemTypes: Record<string, 'artist' | 'album' | 'playlist'>
     destinationPath: string
   }) => Promise<{ removed: number; errors: string[] }>
+  clearDestination: (options: {
+    serverUrl: string; apiKey: string; userId: string
+    destinationPath: string
+  }) => Promise<{ deleted: number; errors: string[] }>
   saveSession: (data: string) => Promise<void>
   loadSession: () => Promise<string | null>
   clearSession: () => Promise<void>
@@ -99,6 +114,8 @@ interface Api {
   getLogPath: () => Promise<string>
   reportBug: () => Promise<{ success: boolean; error?: string }>
   checkForUpdates: (force?: boolean) => Promise<{ updateAvailable: boolean; latestVersion: string; releaseUrl: string }>
+  getPreferences: () => Promise<{ analyticsEnabled: boolean }>
+  setPreferences: (prefs: { analyticsEnabled?: boolean }) => Promise<void>
 }
 
 declare global {
