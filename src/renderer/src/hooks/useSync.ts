@@ -37,7 +37,7 @@ export function useSync({
   const [syncProgress, setSyncProgress] = useState<SyncProgressInfo | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
-  const [isLoadingPreview, _setIsLoadingPreview] = useState(false)
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
   const [syncSuccessData, setSyncSuccessData] = useState<{
     tracksCopied: number; tracksSkipped: number; tracksRetagged: number; removed: number; errors: string[]
   } | null>(null)
@@ -191,8 +191,27 @@ export function useSync({
       return
     }
 
-    const { artistIds, albumIds, playlistIds } = buildItemTypesMap()
+    const { artistIds, albumIds, playlistIds, map } = buildItemTypesMap()
     const selectedIds = [...artistIds, ...albumIds, ...playlistIds].filter(Boolean)
+
+    // Ensure tracks are loaded for all selected items before computing preview.
+    // Items toggled from library view may not have had ensureItemTracks called yet
+    // (lastOpts.itemTypes didn't include them at toggle time → 0 tracks in registry).
+    const toFetch = [...selectedTracks].filter(id => map[id] && registry.getItemTrackIds(id).length === 0)
+    if (toFetch.length > 0) {
+      setIsLoadingPreview(true)
+      try {
+        await Promise.all(
+          toFetch.map(id => registry.ensureItemTracks(id, map[id], {
+            serverUrl: jellyfinConfig.url,
+            apiKey: jellyfinConfig.apiKey,
+            userId,
+          }))
+        )
+      } catch { /* show modal with available data on error */ } finally {
+        setIsLoadingPreview(false)
+      }
+    }
 
     // Use registry for instant size calculation (no network call)
     const totalBytes = registry.calculateSize(selectedTracks, syncFolder, convertToMp3, bitrate) ?? 0

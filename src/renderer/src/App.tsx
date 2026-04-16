@@ -361,6 +361,7 @@ function App(): JSX.Element {
                 showPreview={sync.showPreview}
                 previewData={sync.previewData}
                 syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}
+                estimatedSizeBytes={deviceSelections.estimatedSizeBytes}
                 onToggleItem={deviceSelections.toggleItem}
                 onToggleConvert={() => sync.setConvertToMp3(v => !v)}
                 onBitrateChange={sync.setBitrate}

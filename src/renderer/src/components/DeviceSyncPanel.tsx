@@ -55,6 +55,7 @@ interface DeviceSyncPanelProps {
   showPreview: boolean
   previewData: PreviewData | null
   syncedMusicBytes?: number
+  estimatedSizeBytes?: number | null
   onToggleItem: (id: string) => void
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
@@ -99,6 +100,7 @@ export function DeviceSyncPanel({
   showPreview,
   previewData,
   syncedMusicBytes,
+  estimatedSizeBytes,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
@@ -270,6 +272,12 @@ export function DeviceSyncPanel({
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-sm bg-primary" />
                   {formatBytes(syncedMusicBytes)} Audio
+                </span>
+              )}
+              {estimatedSizeBytes != null && estimatedSizeBytes > 0 && (
+                <span className="flex items-center gap-1 text-primary">
+                  <span className="w-2 h-2 rounded-sm bg-primary_container border border-primary" />
+                  {formatBytes(estimatedSizeBytes)} Selected
                 </span>
               )}
               <span className="flex items-center gap-1">
