@@ -34,9 +34,9 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
           {/* New tracks */}
           {showNew && (
             <div className="flex justify-between text-body-md">
-              <span className="text-on_surface_variant">New tracks</span>
+              <span className="text-primary">New tracks</span>
               <div className="flex items-center gap-2">
-                <span data-testid="preview-new-tracks-count" className="font-medium">{data.newTracksCount.toLocaleString()}</span>
+                <span data-testid="preview-new-tracks-count" className="font-medium text-primary">{data.newTracksCount.toLocaleString()}</span>
                 <span data-testid="preview-new-tracks-size" className="text-on_surface_variant">({formatBytes(data.newTracksBytes)})</span>
               </div>
             </div>
@@ -45,9 +45,9 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
           {/* Updated tracks */}
           {showUpdated && (
             <div className="flex justify-between text-body-md">
-              <span className="text-on_surface_variant">Will update</span>
+              <span className="text-warning">Will update</span>
               <div className="flex items-center gap-2">
-                <span data-testid="preview-updated-tracks-count" className="font-medium">{data.updatedTracksCount.toLocaleString()}</span>
+                <span data-testid="preview-updated-tracks-count" className="font-medium text-warning">{data.updatedTracksCount.toLocaleString()}</span>
                 <span data-testid="preview-updated-tracks-size" className="text-on_surface_variant">({formatBytes(data.updatedTracksBytes)})</span>
               </div>
             </div>
@@ -56,9 +56,9 @@ export function SyncPreviewModal({ data, convertToMp3, bitrate, onCancel, onConf
           {/* Already synced tracks */}
           {showAlreadySynced && (
             <div className="flex justify-between text-body-md">
-              <span className="text-on_surface_variant">Already on device</span>
+              <span className="text-success">Already on device</span>
               <div className="flex items-center gap-2">
-                <span className="font-medium">{data.alreadySyncedCount.toLocaleString()}</span>
+                <span className="font-medium text-success">{data.alreadySyncedCount.toLocaleString()}</span>
                 <span className="text-on_surface_variant">({formatBytes(data.alreadySyncedBytes)})</span>
               </div>
             </div>
