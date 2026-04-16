@@ -56,6 +56,7 @@ interface DeviceSyncPanelProps {
   previewData: PreviewData | null
   syncedMusicBytes?: number
   estimatedSizeBytes?: number | null
+  isLoadingSize?: boolean
   onToggleItem: (id: string) => void
   onToggleConvert: () => void
   onBitrateChange: (b: Bitrate) => void
@@ -101,6 +102,7 @@ export function DeviceSyncPanel({
   previewData,
   syncedMusicBytes,
   estimatedSizeBytes,
+  isLoadingSize,
   onToggleItem,
   onToggleConvert,
   onBitrateChange,
@@ -274,10 +276,10 @@ export function DeviceSyncPanel({
                   {formatBytes(syncedMusicBytes)} Audio
                 </span>
               )}
-              {estimatedSizeBytes != null && estimatedSizeBytes > 0 && (
-                <span className={`flex items-center gap-1 text-primary transition-opacity duration-300 ${isLoadingPreview ? 'opacity-40' : 'opacity-100'}`}>
-                  <span className={`w-2 h-2 rounded-sm bg-primary_container border border-primary inline-block ${isLoadingPreview ? 'animate-sizeSquarePulse' : ''}`} />
-                  {formatBytes(estimatedSizeBytes)} Selected
+              {(isLoadingSize || (estimatedSizeBytes != null && estimatedSizeBytes > 0)) && (
+                <span className={`flex items-center gap-1 text-primary transition-opacity duration-300 ${isLoadingSize ? 'opacity-40' : 'opacity-100'}`}>
+                  <span className={`w-2 h-2 rounded-sm bg-primary_container border border-primary inline-block ${isLoadingSize ? 'animate-sizeSquarePulse' : ''}`} />
+                  {estimatedSizeBytes != null && estimatedSizeBytes > 0 ? formatBytes(estimatedSizeBytes) : '—'} Selected
                 </span>
               )}
               <span className="flex items-center gap-1">

@@ -362,6 +362,7 @@ function App(): JSX.Element {
                 previewData={sync.previewData}
                 syncedMusicBytes={deviceSelections.syncedMusicBytes ?? undefined}
                 estimatedSizeBytes={deviceSelections.estimatedSizeBytes}
+                isLoadingSize={deviceSelections.isLoadingSize}
                 onToggleItem={deviceSelections.toggleItem}
                 onToggleConvert={() => sync.setConvertToMp3(v => !v)}
                 onBitrateChange={sync.setBitrate}

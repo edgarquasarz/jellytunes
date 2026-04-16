@@ -39,6 +39,8 @@ export function useDeviceSelections() {
 
   const [deviceStates, setDeviceStates] = useState<Map<string, DeviceState>>(new Map())
   const [activeDevicePath, setActiveDevicePath] = useState<string | null>(null)
+  // Tracks in-flight ensureItemTracks calls so UI can show loading indicator
+  const [sizeLoadingCount, setSizeLoadingCount] = useState(0)
   // Track last activation key to skip unnecessary re-analysis
   const lastActivationKeyRef = useRef<string | null>(null)
   // Track in-flight activation to avoid duplicate getSyncedItems calls
@@ -183,13 +185,14 @@ export function useDeviceSelections() {
           id => options.itemTypes[id] && registry.getItemTrackIds(id).length === 0
         )
         if (toFetch.length > 0) {
+          setSizeLoadingCount(c => c + 1)
           Promise.all(
             toFetch.map(id => registry.ensureItemTracks(id, options.itemTypes[id], {
               serverUrl: options.serverUrl,
               apiKey: options.apiKey,
               userId: options.userId,
             }))
-          ).then(() => bumpRegistryVersion())
+          ).then(() => bumpRegistryVersion()).finally(() => setSizeLoadingCount(c => c - 1))
         }
       }
     } catch { /* ignore */ } finally {
@@ -251,11 +254,12 @@ export function useDeviceSelections() {
 
     // Fetch tracks for this item if needed (for size calculation)
     if (lastOpts && itemType) {
+      setSizeLoadingCount(c => c + 1)
       registry.ensureItemTracks(id, itemType, {
         serverUrl: lastOpts.serverUrl,
         apiKey: lastOpts.apiKey,
         userId: lastOpts.userId,
-      }).then(() => bumpRegistryVersion())
+      }).then(() => bumpRegistryVersion()).finally(() => setSizeLoadingCount(c => c - 1))
     }
   }, [activeDevicePath, registry])
 
@@ -280,7 +284,8 @@ export function useDeviceSelections() {
           userId: lastOpts.userId,
         }))
       if (fetches.length > 0) {
-        Promise.all(fetches).then(() => bumpRegistryVersion())
+        setSizeLoadingCount(c => c + 1)
+        Promise.all(fetches).then(() => bumpRegistryVersion()).finally(() => setSizeLoadingCount(c => c - 1))
       }
     }
   }, [activeDevicePath, registry])
@@ -316,6 +321,7 @@ export function useDeviceSelections() {
     syncedItemsInfo: activeState.syncedItemsInfo,
     outOfSyncItems: activeState.outOfSyncItems,
     estimatedSizeBytes,
+    isLoadingSize: sizeLoadingCount > 0,
     syncedMusicBytes: activeState.syncedMusicBytes,
     isActivatingDevice: activeState.isActivatingDevice,
     activateDevice,
