@@ -141,14 +141,14 @@ export function AboutModal({ onClose }: AboutModalProps): JSX.Element {
           <button
             onClick={handleAnalyticsToggle}
             aria-label="Anonymous usage statistics"
-            className={`relative w-10 h-5 rounded-full transition-colors ${
-              analyticsEnabled ? 'bg-primary' : 'bg-outline_variant'
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              analyticsEnabled ? 'bg-primary_container' : 'bg-surface_container_highest'
             }`}
             aria-checked={analyticsEnabled}
             role="switch"
           >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-              analyticsEnabled ? 'translate-x-[24px]' : 'translate-x-0'
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+              analyticsEnabled ? 'translate-x-6' : 'translate-x-1'
             }`} />
           </button>
         </div>
