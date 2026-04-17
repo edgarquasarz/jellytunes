@@ -50,6 +50,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
+      - name: Install Python setuptools (for distutils)
+        if: matrix.os == 'macos-latest' || matrix.os == 'windows-latest'
+        run: pip install setuptools
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         env:
