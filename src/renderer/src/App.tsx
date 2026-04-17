@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import type { ActiveSection, LibraryTab, Artist, Album, Playlist } from './appTypes'
+import type { ActiveSection, LibraryTab, Artist, Album, Playlist, Bitrate } from './appTypes'
 
 import { AppHeader } from './components/AppHeader'
 import { SyncSuccessModal } from './components/SyncSuccessModal'
@@ -143,7 +143,12 @@ function App(): JSX.Element {
     lib.handleTabChange(tab)
   }
 
-  const handleDestinationClick = async (path: string) => {
+  const handleDestinationClick = async (
+    path: string,
+    forcedConvert?: boolean,
+    forcedBitrate?: Bitrate,
+    forcedCover?: 'off' | 'embed' | 'separate'
+  ) => {
     if (!connection.jellyfinConfig || !connection.userId) return
 
     // Inform the user their pending (unsynced) selections are preserved when switching devices
@@ -170,10 +175,12 @@ function App(): JSX.Element {
     for (const p of extPlaylists) { if (selected.has(p.Id)) { itemIds.push(p.Id); itemTypes[p.Id] = 'playlist' } }
 
     // Load saved prefs for this destination (or use global defaults)
+    // forced* params come from handleAddFolder where state hasn't flushed yet;
+    // otherwise fall back to localStorage via savedDestinations.find
     const savedDest = savedDestinations.find(d => d.path === path)
-    const savedConvert = savedDest?.convertToMp3 ?? sync.convertToMp3
-    const savedBitrate = savedDest?.bitrate ?? sync.bitrate
-    const savedCover = savedDest?.coverArtMode ?? 'embed'
+    const savedConvert = forcedConvert ?? savedDest?.convertToMp3 ?? sync.convertToMp3
+    const savedBitrate = forcedBitrate ?? savedDest?.bitrate ?? sync.bitrate
+    const savedCover = forcedCover ?? savedDest?.coverArtMode ?? 'embed'
 
     // Sync global state to saved prefs so the panel shows correct values on arrival
     if (savedDest && (savedConvert !== sync.convertToMp3 || savedBitrate !== sync.bitrate)) {
@@ -196,8 +203,16 @@ function App(): JSX.Element {
   const handleAddFolder = async () => {
     const folder = await window.api.selectFolder()
     if (!folder) return
-    addDestination(folder)
-    handleDestinationClick(folder)
+    const saved = addDestination(folder)
+    // addDestination is synchronous — saved has the (possibly new) dest with current prefs
+    const savedConvert = saved.convertToMp3 ?? sync.convertToMp3
+    const savedBitrate = saved.bitrate ?? sync.bitrate
+    const savedCover = saved.coverArtMode ?? 'embed'
+    if (savedConvert !== sync.convertToMp3 || savedBitrate !== sync.bitrate) {
+      sync.setConvertToMp3(savedConvert)
+      sync.setBitrate(savedBitrate)
+    }
+    handleDestinationClick(folder, savedConvert, savedBitrate, savedCover)
   }
 
   const handleRemoveDestination = async (path: string, deleteFiles: boolean, onDone: () => void) => {
